@@ -7,6 +7,7 @@ import {
   ProcessedTripHistory,
   GpsPoint,
   GpsSegment,
+  calculateHaversineDistanceKm,
 } from '../utils/gpsSegmentation';
 import {
   History,
@@ -34,6 +35,7 @@ import {
   ShieldAlert,
   Plus,
   Minus,
+  Radio,
 } from 'lucide-react';
 import { MapTileLayerType } from '../components/map/MapView';
 
@@ -89,6 +91,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
   const [activeLayer, setActiveLayer] = useState<MapTileLayerType>('voyager');
   const [showLayerSelector, setShowLayerSelector] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  const [isFollowVehicle, setIsFollowVehicle] = useState<boolean>(false);
 
   // Playback Player State
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -102,6 +105,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
   const polylineLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const animatedMarkerRef = useRef<L.Marker | null>(null);
   const animationTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastFittedTripKeyRef = useRef<string | null>(null);
 
   // Single unified positions array for Map, Replay and Distance (Zero desynchronization)
   const displayPositions: GpsPoint[] = processedData?.displayPositions || [];
@@ -209,13 +213,18 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
     polylineLayerGroupRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
+    map.on('dragstart', () => {
+      // Pause manual follow on user drag
+      setIsFollowVehicle(false);
+    });
+
     return () => {
       map.remove();
       mapRef.current = null;
     };
   }, []);
 
-  // Switch Layer Instantly
+  // Switch Layer Instantly (Without resetting zoom or center)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -234,7 +243,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
     activeTileLayerRef.current = newLayer;
   }, [activeLayer]);
 
-  // Draw Multi-Segment Polylines & Markers (Guarantees NO connecting lines across jumps!)
+  // Draw Multi-Segment Polylines, Traccar Directional Arrows & Markers
   useEffect(() => {
     const map = mapRef.current;
     const layerGroup = polylineLayerGroupRef.current;
@@ -251,9 +260,9 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       return;
     }
 
-    const bounds = L.latLngBounds([]);
+    const currentTripKey = `${selectedVehicleId}-${selectedDate}`;
 
-    // 1. Render Each Segment Independently
+    // 1. Render Each Segment with Polylines & Directional Course Arrows (Style Traccar)
     processedData.segments.forEach((segment: GpsSegment, sIdx: number) => {
       const segPoints = segment.points;
 
@@ -271,7 +280,6 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
           })} (${p.speed} km/h)`
         );
         layerGroup.addLayer(marker);
-        bounds.extend([p.lat, p.lng]);
         return;
       }
 
@@ -279,8 +287,6 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       for (let i = 1; i < segPoints.length; i++) {
         const p1 = segPoints[i - 1];
         const p2 = segPoints[i];
-        bounds.extend([p1.lat, p1.lng]);
-        bounds.extend([p2.lat, p2.lng]);
 
         const speed = p2.speed;
         const color = speed > 90 ? '#EF4444' : speed >= 50 ? '#F59E0B' : '#06B6D4';
@@ -301,6 +307,61 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
         layerGroup.addLayer(poly);
       }
 
+      // ============================================================
+      // 2. DIRECTIONAL COURSE ARROWS ALONG THE TRACK (TRACCAR STYLE)
+      // ============================================================
+      let lastArrowDist = 0;
+      let lastArrowPt = segPoints[0];
+
+      // Add first arrow
+      const firstSpeed = segPoints[0].speed;
+      const firstColor = firstSpeed > 90 ? '#EF4444' : firstSpeed >= 50 ? '#F59E0B' : '#06B6D4';
+      const firstArrowIcon = L.divIcon({
+        html: `
+          <div style="transform: rotate(${segPoints[0].heading}deg); width: 14px; height: 14px; display: flex; items-center; justify-center; pointer-events: none;">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 14px; height: 14px; fill: ${firstColor}; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.8));">
+              <path d="M12 2L2 22l10-4 10 4z"/>
+            </svg>
+          </div>
+        `,
+        className: 'course-arrow-icon',
+        iconSize: [14, 14],
+        iconAnchor: [7, 7],
+      });
+      layerGroup.addLayer(L.marker([segPoints[0].lat, segPoints[0].lng], { icon: firstArrowIcon }));
+
+      for (let i = 1; i < segPoints.length; i++) {
+        const pt = segPoints[i];
+        const distKm = calculateHaversineDistanceKm(lastArrowPt.lat, lastArrowPt.lng, pt.lat, pt.lng);
+        lastArrowDist += distKm;
+
+        // Space directional arrows by at least 80 meters (0.08 km)
+        if (lastArrowDist >= 0.08) {
+          const speed = pt.speed;
+          const arrowColor = speed > 90 ? '#EF4444' : speed >= 50 ? '#F59E0B' : '#06B6D4';
+          const heading = pt.heading;
+
+          const arrowIcon = L.divIcon({
+            html: `
+              <div style="transform: rotate(${heading}deg); width: 14px; height: 14px; display: flex; items-center; justify-center; pointer-events: none;">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="width: 14px; height: 14px; fill: ${arrowColor}; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.8));">
+                  <path d="M12 2L2 22l10-4 10 4z"/>
+                </svg>
+              </div>
+            `,
+            className: 'course-arrow-icon',
+            iconSize: [14, 14],
+            iconAnchor: [7, 7],
+          });
+
+          const arrowMarker = L.marker([pt.lat, pt.lng], { icon: arrowIcon });
+          layerGroup.addLayer(arrowMarker);
+
+          lastArrowPt = pt;
+          lastArrowDist = 0;
+        }
+      }
+
       // Segment Start indicator if multiple segments exist
       if (processedData.segments.length > 1) {
         const sStart = segPoints[0];
@@ -314,7 +375,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       }
     });
 
-    // 2. Start (Green) and Final (Red) Markers strictly on displayPositions
+    // 3. Start (Green) and Final (Red) Markers strictly on displayPositions
     const startPt = displayPositions[0];
     const endPt = displayPositions[displayPositions.length - 1];
 
@@ -348,12 +409,17 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       layerGroup.addLayer(endMarker);
     }
 
-    // 3. Fit Map Bounds (Strictly matching real display points)
-    if (bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+    // 4. Initial fitBounds ONLY when loading a new trip (NEVER during replay/playback)
+    if (lastFittedTripKeyRef.current !== currentTripKey) {
+      const bounds = L.latLngBounds([]);
+      displayPositions.forEach((p) => bounds.extend([p.lat, p.lng]));
+      if (bounds.isValid()) {
+        map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+        lastFittedTripKeyRef.current = currentTripKey;
+      }
     }
 
-    // 4. Initial Animated Marker
+    // 5. Initial Animated Vehicle Marker
     const initialPt = displayPositions[playbackIndex] || startPt;
     if (initialPt) {
       const markerIcon = L.divIcon({
@@ -373,7 +439,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
         icon: markerIcon,
       }).addTo(map);
     }
-  }, [processedData]);
+  }, [processedData, selectedVehicleId, selectedDate]);
 
   // Handle Playback Animation Loop
   useEffect(() => {
@@ -399,7 +465,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
     };
   }, [isPlaying, speedMultiplier, displayPositions.length]);
 
-  // Update animated marker position on index change
+  // Update animated marker position without resetting user zoom/pan
   useEffect(() => {
     const pt = displayPositions[playbackIndex];
     if (pt && animatedMarkerRef.current && mapRef.current) {
@@ -417,9 +483,13 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
         iconAnchor: [20, 20],
       });
       animatedMarkerRef.current.setIcon(markerIcon);
-      mapRef.current.panTo([pt.lat, pt.lng], { animate: true });
+
+      // ONLY pan camera if the user explicitly requested "Suivre le véhicule"
+      if (isFollowVehicle) {
+        mapRef.current.panTo([pt.lat, pt.lng], { animate: true });
+      }
     }
-  }, [playbackIndex, displayPositions]);
+  }, [playbackIndex, displayPositions, isFollowVehicle]);
 
   // Toggle Browser Native Fullscreen Mode
   const toggleFullscreen = async (e?: React.MouseEvent) => {
@@ -800,6 +870,22 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
               title="Recentrer le trajet complet"
             >
               <Crosshair className="w-4 h-4" />
+            </button>
+
+            {/* Manual Follow Toggle (🎯) */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                const nextFollow = !isFollowVehicle;
+                setIsFollowVehicle(nextFollow);
+                if (nextFollow && currentPoint && mapRef.current) {
+                  mapRef.current.panTo([currentPoint.lat, currentPoint.lng], { animate: true });
+                }
+              }}
+              className={`bcs-map-control-btn ${isFollowVehicle ? 'active !text-cyan-400 !border-cyan-400 shadow-cyan-950/60' : ''}`}
+              title={isFollowVehicle ? 'Désactiver le suivi du véhicule' : 'Activer le suivi caméra du véhicule'}
+            >
+              <Radio className="w-4 h-4" />
             </button>
 
             {/* Native Fullscreen Button (⛶) */}
