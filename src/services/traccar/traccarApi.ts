@@ -1,4 +1,4 @@
-import { TraccarDevice, TraccarPosition } from '../../types';
+import { TraccarDevice, TraccarPosition, Geofence } from '../../types';
 
 export class TraccarApi {
   private baseUrl: string;
@@ -45,10 +45,15 @@ export class TraccarApi {
     return response.json() as Promise<T>;
   }
 
+  // Get server configuration and health status
+  async getServer(): Promise<any> {
+    return this.request('/server');
+  }
+
   // Check connection status & initialize session
   async checkConnection(): Promise<boolean> {
     try {
-      await this.request('/server');
+      await this.getServer();
       // Authenticate session if needed
       try {
         if (this.username && this.password) {
@@ -88,7 +93,7 @@ export class TraccarApi {
     return this.request<TraccarPosition[]>('/positions');
   }
 
-  // Get positions for specific device
+  // Get positions for specific device and date range
   async getDevicePositions(deviceId: number, from: string, to: string): Promise<TraccarPosition[]> {
     const params = new URLSearchParams({
       deviceId: deviceId.toString(),
@@ -96,6 +101,36 @@ export class TraccarApi {
       to,
     });
     return this.request<TraccarPosition[]>(`/positions?${params.toString()}`);
+  }
+
+  // Get route report for specific device
+  async getRoute(deviceId: number, from: string, to: string): Promise<TraccarPosition[]> {
+    const params = new URLSearchParams({
+      deviceId: deviceId.toString(),
+      from,
+      to,
+    });
+    return this.request<TraccarPosition[]>(`/reports/route?${params.toString()}`);
+  }
+
+  // Get geofences from Traccar
+  async getGeofences(): Promise<any[]> {
+    try {
+      return await this.request<any[]>('/geofences');
+    } catch {
+      return [];
+    }
+  }
+
+  // Get events from Traccar
+  async getEvents(from: string, to: string, deviceId?: number): Promise<any[]> {
+    try {
+      const params = new URLSearchParams({ from, to });
+      if (deviceId) params.append('deviceId', deviceId.toString());
+      return await this.request<any[]>(`/reports/events?${params.toString()}`);
+    } catch {
+      return [];
+    }
   }
 
   // Send engine command (Immobilization / Resume)
