@@ -113,7 +113,9 @@ const MainAppContent: React.FC = () => {
 
           {currentTab === 'drivers' && <DriversPage />}
 
-          {currentTab === 'history' && <TripHistoryPage />}
+          {(currentTab === 'history' || currentTab === 'replay') && (
+            <TripHistoryPage selectedVehicleIdFromNav={selectedVehicleForNav} />
+          )}
 
           {currentTab === 'geofences' && <GeofencesPage />}
 

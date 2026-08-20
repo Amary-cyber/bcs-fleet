@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import L from 'leaflet';
 import { useFleet } from '../contexts/FleetContext';
-import { useAuth } from '../contexts/AuthContext';
 import { traccarApi } from '../services/traccar/traccarApi';
-import { RoutePoint } from '../types';
 import {
   processTraccarPositions,
   ProcessedTripHistory,
+  GpsPoint,
   GpsSegment,
 } from '../utils/gpsSegmentation';
 import {
@@ -20,20 +19,26 @@ import {
   AlertCircle,
   Clock,
   Gauge,
-  Layers,
   Bug,
   ChevronDown,
   ChevronUp,
   MapPin,
   Compass,
   Zap,
+  ArrowRight,
+  ShieldAlert,
 } from 'lucide-react';
 
-export const TripHistoryPage: React.FC = () => {
-  const { vehicles } = useFleet();
-  const { role } = useAuth();
+interface TripHistoryPageProps {
+  selectedVehicleIdFromNav?: string | null;
+}
 
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(vehicles[0]?.id || '');
+export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicleIdFromNav }) => {
+  const { vehicles } = useFleet();
+
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(
+    selectedVehicleIdFromNav || vehicles[0]?.id || ''
+  );
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [processedData, setProcessedData] = useState<ProcessedTripHistory | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -50,17 +55,20 @@ export const TripHistoryPage: React.FC = () => {
   const animatedMarkerRef = useRef<L.Marker | null>(null);
   const animationTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const allValidPoints = processedData?.allValidPoints || [];
-  const currentPoint: RoutePoint | null = allValidPoints[playbackIndex] || allValidPoints[0] || null;
+  // Single unified positions array for Map, Replay and Distance (Zero desynchronization)
+  const displayPositions: GpsPoint[] = processedData?.displayPositions || [];
+  const currentPoint: GpsPoint | null = displayPositions[playbackIndex] || displayPositions[0] || null;
 
-  // Ensure valid selected vehicle
+  // Handle selected vehicle sync
   useEffect(() => {
-    if (vehicles.length > 0 && (!selectedVehicleId || !vehicles.some((v) => v.id === selectedVehicleId))) {
+    if (selectedVehicleIdFromNav && vehicles.some((v) => v.id === selectedVehicleIdFromNav)) {
+      setSelectedVehicleId(selectedVehicleIdFromNav);
+    } else if (vehicles.length > 0 && (!selectedVehicleId || !vehicles.some((v) => v.id === selectedVehicleId))) {
       setSelectedVehicleId(vehicles[0].id);
     }
-  }, [vehicles, selectedVehicleId]);
+  }, [selectedVehicleIdFromNav, vehicles, selectedVehicleId]);
 
-  // Fetch real positions from Traccar API for the selected device and date
+  // Fetch real positions from Traccar API for selected device and date
   useEffect(() => {
     const selectedVeh = vehicles.find((v) => v.id === selectedVehicleId);
     if (selectedVeh && selectedVeh.traccar_id) {
@@ -100,14 +108,11 @@ export const TripHistoryPage: React.FC = () => {
       zoomControl: false,
     });
 
-    L.tileLayer(
-      'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-      {
-        attribution: '&copy; CARTO &copy; OpenStreetMap',
-        maxZoom: 19,
-        subdomains: 'abcd',
-      }
-    ).addTo(map);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; CARTO &copy; OpenStreetMap',
+      maxZoom: 19,
+      subdomains: 'abcd',
+    }).addTo(map);
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
     polylineLayerGroupRef.current = L.layerGroup().addTo(map);
@@ -119,7 +124,7 @@ export const TripHistoryPage: React.FC = () => {
     };
   }, []);
 
-  // Draw Multi-Segment Polylines & Markers
+  // Draw Multi-Segment Polylines & Markers (Guarantees NO connecting lines across jumps!)
   useEffect(() => {
     const map = mapRef.current;
     const layerGroup = polylineLayerGroupRef.current;
@@ -132,31 +137,35 @@ export const TripHistoryPage: React.FC = () => {
       animatedMarkerRef.current = null;
     }
 
-    if (!processedData || processedData.segments.length === 0 || allValidPoints.length === 0) {
+    if (!processedData || processedData.segments.length === 0 || displayPositions.length === 0) {
       return;
     }
 
     const bounds = L.latLngBounds([]);
 
-    // 1. Render Each Segment Independently (No line across jumps!)
-    processedData.segments.forEach((segment, sIdx) => {
+    // 1. Render Each Segment Independently
+    processedData.segments.forEach((segment: GpsSegment, sIdx: number) => {
       const segPoints = segment.points;
 
       if (segPoints.length === 1) {
-        // Single point in segment -> Circle Marker
+        // Single isolated point
         const p = segPoints[0];
         const marker = L.circleMarker([p.lat, p.lng], {
           radius: 6,
           color: '#06B6D4',
           fillColor: '#06B6D4',
           fillOpacity: 0.9,
-        }).bindTooltip(`<b>Point isolé</b>: ${new Date(p.timestamp).toLocaleTimeString()} (${p.speed} km/h)`);
+        }).bindTooltip(
+          `<b>Point isolé</b>: ${new Date(p.timestamp).toLocaleTimeString('fr-FR', {
+            timeZone: 'Africa/Dakar',
+          })} (${p.speed} km/h)`
+        );
         layerGroup.addLayer(marker);
         bounds.extend([p.lat, p.lng]);
         return;
       }
 
-      // Draw Polyline with Speed-Coded Segments
+      // Draw Multi-colored Sub-segments based on Traccar speed
       for (let i = 1; i < segPoints.length; i++) {
         const p1 = segPoints[i - 1];
         const p2 = segPoints[i];
@@ -182,7 +191,7 @@ export const TripHistoryPage: React.FC = () => {
         layerGroup.addLayer(poly);
       }
 
-      // Segment Start / End indicators if multiple segments
+      // Segment Start indicator if multiple segments exist
       if (processedData.segments.length > 1) {
         const sStart = segPoints[0];
         const segBadge = L.circleMarker([sStart.lat, sStart.lng], {
@@ -195,51 +204,65 @@ export const TripHistoryPage: React.FC = () => {
       }
     });
 
-    // 2. Start (Green) and Final Destination (Red) Markers
-    const startPt = allValidPoints[0];
-    const endPt = allValidPoints[allValidPoints.length - 1];
+    // 2. Start (Green) and Final (Red) Markers strictly on displayPositions
+    const startPt = displayPositions[0];
+    const endPt = displayPositions[displayPositions.length - 1];
 
-    const startMarker = L.circleMarker([startPt.lat, startPt.lng], {
-      radius: 9,
-      color: '#10B981',
-      fillColor: '#10B981',
-      fillOpacity: 1,
-      weight: 2,
-    }).bindTooltip(`<b>Départ Réel</b>: ${new Date(startPt.timestamp).toLocaleTimeString()}`);
-    layerGroup.addLayer(startMarker);
+    if (startPt) {
+      const startMarker = L.circleMarker([startPt.lat, startPt.lng], {
+        radius: 9,
+        color: '#10B981',
+        fillColor: '#10B981',
+        fillOpacity: 1,
+        weight: 2,
+      }).bindTooltip(
+        `<b>Départ Réel</b>: ${new Date(startPt.timestamp).toLocaleTimeString('fr-FR', {
+          timeZone: 'Africa/Dakar',
+        })}`
+      );
+      layerGroup.addLayer(startMarker);
+    }
 
-    const endMarker = L.circleMarker([endPt.lat, endPt.lng], {
-      radius: 9,
-      color: '#EF4444',
-      fillColor: '#EF4444',
-      fillOpacity: 1,
-      weight: 2,
-    }).bindTooltip(`<b>Dernière Position</b>: ${new Date(endPt.timestamp).toLocaleTimeString()}`);
-    layerGroup.addLayer(endMarker);
+    if (endPt) {
+      const endMarker = L.circleMarker([endPt.lat, endPt.lng], {
+        radius: 9,
+        color: '#EF4444',
+        fillColor: '#EF4444',
+        fillOpacity: 1,
+        weight: 2,
+      }).bindTooltip(
+        `<b>Dernière Position</b>: ${new Date(endPt.timestamp).toLocaleTimeString('fr-FR', {
+          timeZone: 'Africa/Dakar',
+        })}`
+      );
+      layerGroup.addLayer(endMarker);
+    }
 
-    // 3. Fit Map Bounds
+    // 3. Fit Map Bounds (Strictly matching real display points)
     if (bounds.isValid()) {
       map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
     }
 
     // 4. Initial Animated Marker
-    const initialPt = allValidPoints[playbackIndex] || startPt;
-    const markerIcon = L.divIcon({
-      html: `
-        <div class="w-10 h-10 rounded-xl bg-slate-900 border-2 border-cyan-400 flex items-center justify-center shadow-2xl">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6 text-cyan-400" style="transform: rotate(${initialPt.heading}deg)">
-            <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/>
-          </svg>
-        </div>
-      `,
-      className: 'playback-marker',
-      iconSize: [40, 40],
-      iconAnchor: [20, 20],
-    });
+    const initialPt = displayPositions[playbackIndex] || startPt;
+    if (initialPt) {
+      const markerIcon = L.divIcon({
+        html: `
+          <div class="w-10 h-10 rounded-xl bg-slate-900 border-2 border-cyan-400 flex items-center justify-center shadow-2xl">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" class="w-6 h-6 text-cyan-400" style="transform: rotate(${initialPt.heading}deg)">
+              <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/>
+            </svg>
+          </div>
+        `,
+        className: 'playback-marker',
+        iconSize: [40, 40],
+        iconAnchor: [20, 20],
+      });
 
-    animatedMarkerRef.current = L.marker([initialPt.lat, initialPt.lng], {
-      icon: markerIcon,
-    }).addTo(map);
+      animatedMarkerRef.current = L.marker([initialPt.lat, initialPt.lng], {
+        icon: markerIcon,
+      }).addTo(map);
+    }
   }, [processedData]);
 
   // Handle Playback Animation Loop
@@ -253,7 +276,7 @@ export const TripHistoryPage: React.FC = () => {
 
     animationTimerRef.current = setInterval(() => {
       setPlaybackIndex((prev) => {
-        if (prev >= allValidPoints.length - 1) {
+        if (prev >= displayPositions.length - 1) {
           setIsPlaying(false);
           return prev;
         }
@@ -264,11 +287,11 @@ export const TripHistoryPage: React.FC = () => {
     return () => {
       if (animationTimerRef.current) clearInterval(animationTimerRef.current);
     };
-  }, [isPlaying, speedMultiplier, allValidPoints.length]);
+  }, [isPlaying, speedMultiplier, displayPositions.length]);
 
   // Update animated marker position on index change
   useEffect(() => {
-    const pt = allValidPoints[playbackIndex];
+    const pt = displayPositions[playbackIndex];
     if (pt && animatedMarkerRef.current && mapRef.current) {
       animatedMarkerRef.current.setLatLng([pt.lat, pt.lng]);
       const markerIcon = L.divIcon({
@@ -286,7 +309,7 @@ export const TripHistoryPage: React.FC = () => {
       animatedMarkerRef.current.setIcon(markerIcon);
       mapRef.current.panTo([pt.lat, pt.lng], { animate: true });
     }
-  }, [playbackIndex, allValidPoints]);
+  }, [playbackIndex, displayPositions]);
 
   const selectedVeh = vehicles.find((v) => v.id === selectedVehicleId);
 
@@ -301,11 +324,11 @@ export const TripHistoryPage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-5 pb-8">
+    <div className="space-y-4 pb-8">
       {/* ============================================================ */}
-      {/* 1. HEADER & CONTROLS BAR                                     */}
+      {/* 1. HEADER & FILTER BAR                                       */}
       {/* ============================================================ */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-800 shadow-xl">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-slate-900 p-5 rounded-2xl border border-slate-800 shadow-xl">
         <div>
           <div className="flex items-center space-x-2">
             <h1 className="text-xl font-bold text-white font-mono flex items-center gap-2">
@@ -344,14 +367,12 @@ export const TripHistoryPage: React.FC = () => {
 
           <div>
             <label className="block text-[10px] text-slate-400 mb-1 font-semibold">Date d'Analyse</label>
-            <div className="relative">
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:border-cyan-500"
-              />
-            </div>
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white font-mono focus:border-cyan-500"
+            />
           </div>
 
           {/* Diagnostic Debug Toggle Button */}
@@ -366,7 +387,7 @@ export const TripHistoryPage: React.FC = () => {
               title="Afficher les métriques de segmentation et diagnostic GPS"
             >
               <Bug className="w-3.5 h-3.5" />
-              <span>Diagnostic</span>
+              <span>GPS Diagnostic</span>
               {isDebugOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
           </div>
@@ -374,69 +395,108 @@ export const TripHistoryPage: React.FC = () => {
       </div>
 
       {/* ============================================================ */}
-      {/* 2. ADMIN / DEVELOPER DEBUG HUD PANEL                        */}
+      {/* 2. ADMIN / DEVELOPER GPS DIAGNOSTIC HUD                      */}
       {/* ============================================================ */}
       {isDebugOpen && (
-        <div className="glass-panel p-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 space-y-3 animate-in fade-in slide-in-from-top-2">
+        <div className="glass-panel p-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 space-y-4 animate-in fade-in slide-in-from-top-2">
           <div className="flex items-center justify-between text-xs font-mono font-bold text-amber-400">
             <span className="flex items-center gap-2">
               <Zap className="w-4 h-4" />
-              TRACCAR TELEMETRY DIAGNOSTIC &amp; GPS SEGMENTATION
+              PANNEAU DIAGNOSTIC TÉLÉMÉTRIQUE TRACCAR &amp; SAUTS GPS
             </span>
             <span className="text-[10px] text-slate-400">
-              Protection contre les sauts GPS et polylines artificielles
+              Isolation des discontinuités physiques et trames de test
             </span>
           </div>
 
           {processedData ? (
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 text-xs font-mono">
-              <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
-                <div className="text-[10px] text-slate-400">Device ID</div>
-                <div className="font-bold text-cyan-400">{processedData.debugInfo.deviceId}</div>
-              </div>
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 text-xs font-mono">
+                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Device ID</div>
+                  <div className="font-bold text-cyan-400">{processedData.diagnostic.deviceId}</div>
+                </div>
 
-              <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
-                <div className="text-[10px] text-slate-400">Points Bruts</div>
-                <div className="font-bold text-white">{processedData.debugInfo.rawCount}</div>
-              </div>
+                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Points Bruts</div>
+                  <div className="font-bold text-white">{processedData.diagnostic.rawCount}</div>
+                </div>
 
-              <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
-                <div className="text-[10px] text-slate-400">Points Valides</div>
-                <div className="font-bold text-emerald-400">{processedData.debugInfo.validCount}</div>
-              </div>
+                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Test Exclus</div>
+                  <div className="font-bold text-amber-400">{processedData.diagnostic.testPointsExcluded}</div>
+                </div>
 
-              <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
-                <div className="text-[10px] text-slate-400">Test Exclus</div>
-                <div className="font-bold text-amber-400">{processedData.debugInfo.testPointsExcluded}</div>
-              </div>
+                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Points Utiles</div>
+                  <div className="font-bold text-emerald-400">{displayPositions.length}</div>
+                </div>
 
-              <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
-                <div className="text-[10px] text-slate-400">Points Rejetés</div>
-                <div className="font-bold text-rose-400">{processedData.debugInfo.rejectedCount}</div>
-              </div>
+                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Segments</div>
+                  <div className="font-bold text-cyan-400">{processedData.diagnostic.segmentsCount}</div>
+                </div>
 
-              <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
-                <div className="text-[10px] text-slate-400">Segments</div>
-                <div className="font-bold text-cyan-400">{processedData.debugInfo.segmentsCount}</div>
-              </div>
+                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Sauts Détectés</div>
+                  <div className="font-bold text-emerald-400">{processedData.diagnostic.jumpsDetected}</div>
+                </div>
 
-              <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
-                <div className="text-[10px] text-slate-400">Sauts Détectés</div>
-                <div className="font-bold text-emerald-400">{processedData.debugInfo.jumpsDetected}</div>
-              </div>
+                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Distance Réelle</div>
+                  <div className="font-bold text-cyan-400">{processedData.totalDistanceKm} km</div>
+                </div>
 
-              <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
-                <div className="text-[10px] text-slate-400">Distance Réelle</div>
-                <div className="font-bold text-cyan-400">{processedData.totalDistanceKm} km</div>
-              </div>
-
-              <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
-                <div className="text-[10px] text-slate-400">Zone GPS</div>
-                <div className="font-bold text-slate-300 truncate" title={`${processedData.debugInfo.minLat?.toFixed(4)}, ${processedData.debugInfo.minLng?.toFixed(4)}`}>
-                  {processedData.debugInfo.minLat?.toFixed(3)}°N
+                <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+                  <div className="text-[10px] text-slate-400">Zone GPS</div>
+                  <div className="font-bold text-slate-300 truncate">
+                    {processedData.diagnostic.minLat?.toFixed(3)}°N
+                  </div>
                 </div>
               </div>
-            </div>
+
+              {/* Jumps Detail Audit Table */}
+              {processedData.diagnostic.jumps.length > 0 && (
+                <div className="space-y-2 pt-2 border-t border-amber-500/20 text-xs font-mono">
+                  <div className="text-[11px] font-bold text-amber-400 flex items-center gap-1.5">
+                    <ShieldAlert className="w-3.5 h-3.5" />
+                    Détail des discontinuités / sauts GPS isolés :
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-[11px] text-slate-300">
+                      <thead>
+                        <tr className="border-b border-slate-800 text-slate-500">
+                          <th className="py-1">#</th>
+                          <th>FROM (Lat, Lng)</th>
+                          <th>TO (Lat, Lng)</th>
+                          <th>Distance</th>
+                          <th>Écart Temps</th>
+                          <th>Vitesse Implicite</th>
+                          <th>Raison de la coupure</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {processedData.diagnostic.jumps.map((j) => (
+                          <tr key={j.jumpIndex} className="border-b border-slate-900/60">
+                            <td className="py-1 text-cyan-400">#{j.jumpIndex}</td>
+                            <td>
+                              {j.fromPoint.lat.toFixed(4)}, {j.fromPoint.lng.toFixed(4)}
+                            </td>
+                            <td>
+                              {j.toPoint.lat.toFixed(4)}, {j.toPoint.lng.toFixed(4)}
+                            </td>
+                            <td className="text-amber-400 font-bold">{j.distanceKm} km</td>
+                            <td>{j.deltaTimeSec}s</td>
+                            <td className="text-rose-400">{j.impliedSpeedKmh} km/h</td>
+                            <td className="text-slate-400">{j.reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <div className="text-xs text-slate-400">Aucune télémétrie chargée pour le diagnostic.</div>
           )}
@@ -444,9 +504,9 @@ export const TripHistoryPage: React.FC = () => {
       )}
 
       {/* ============================================================ */}
-      {/* 3. REAL TRIP KPI METRICS SUMMARY                             */}
+      {/* 3. REAL TRIP METRICS SUMMARY                                 */}
       {/* ============================================================ */}
-      {processedData && allValidPoints.length > 0 ? (
+      {processedData && displayPositions.length > 0 ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
           <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
             <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
@@ -486,16 +546,16 @@ export const TripHistoryPage: React.FC = () => {
 
           <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
             <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-              Points Traccar
+              Positions Replay
             </div>
             <div className="text-xl font-black text-amber-400 font-mono mt-1">
-              {allValidPoints.length}
+              {displayPositions.length}
             </div>
           </div>
 
           <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
             <div className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
-              Segments Réels
+              Segments Contigus
             </div>
             <div className="text-xl font-black text-slate-300 font-mono mt-1">
               {processedData.segments.length} segment(s)
@@ -517,7 +577,7 @@ export const TripHistoryPage: React.FC = () => {
       {/* 4. MAP CONTAINER & REPLAY WORKSPACE                          */}
       {/* ============================================================ */}
       <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-4">
-        {/* Leaflet Map */}
+        {/* Leaflet Map Target */}
         <div className="h-[480px] w-full rounded-xl overflow-hidden border border-slate-800 relative shadow-2xl">
           <div ref={mapContainerRef} className="w-full h-full" />
 
@@ -556,7 +616,7 @@ export const TripHistoryPage: React.FC = () => {
           )}
 
           {/* Speed Legend Overlay */}
-          {processedData && allValidPoints.length > 0 && (
+          {processedData && displayPositions.length > 0 && (
             <div className="absolute top-4 right-4 glass-card px-3 py-2 rounded-xl border border-slate-800 z-20 text-[10px] font-mono flex items-center space-x-3 shadow-xl">
               <div className="flex items-center space-x-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#06B6D4]" />
@@ -589,9 +649,9 @@ export const TripHistoryPage: React.FC = () => {
         </div>
 
         {/* ============================================================ */}
-        {/* 5. ANIMATED REPLAY CONTROLS BAR                             */}
+        {/* 5. ANIMATED REPLAY TIMELINE & CONTROLS                       */}
         {/* ============================================================ */}
-        {processedData && allValidPoints.length > 0 && (
+        {processedData && displayPositions.length > 0 && (
           <div className="glass-panel p-4 rounded-xl border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
             {/* Control Buttons */}
             <div className="flex items-center space-x-2.5">
@@ -633,15 +693,15 @@ export const TripHistoryPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Timeline Progress Slider */}
+            {/* Exact Replay Counter & Seek Slider */}
             <div className="flex-1 w-full flex items-center space-x-3">
-              <span className="text-xs font-mono text-cyan-400 font-bold shrink-0 min-w-[70px]">
-                {playbackIndex + 1} / {allValidPoints.length}
+              <span className="text-xs font-mono text-cyan-400 font-bold shrink-0 min-w-[75px]">
+                {playbackIndex + 1} / {displayPositions.length}
               </span>
               <input
                 type="range"
                 min={0}
-                max={allValidPoints.length - 1}
+                max={displayPositions.length - 1}
                 value={playbackIndex}
                 onChange={(e) => setPlaybackIndex(Number(e.target.value))}
                 className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
