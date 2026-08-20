@@ -316,8 +316,8 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       comm_status: commStatus,
       current_speed: effectiveSpeed,
       current_heading: position ? Math.round(position.course || 0) : 0,
-      current_lat: position ? position.latitude : 14.6937,
-      current_lng: position ? position.longitude : -17.4583,
+      current_lat: position ? position.latitude : 14.7869,
+      current_lng: position ? position.longitude : -17.3767,
       battery_level: position?.attributes?.batteryLevel ?? position?.attributes?.battery ?? null,
       ignition_on: position?.attributes?.ignition ?? false,
       engine_locked: false,
@@ -493,7 +493,12 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
 
     syncLiveTraccarData();
-    const intervalId = setInterval(syncLiveTraccarData, 10000);
+    const intervalId = setInterval(syncLiveTraccarData, 12000);
+
+    // Register immediate sync callback when WebSocket reconnects
+    const unsubscribeReconnect = traccarWs.onReconnect(() => {
+      syncLiveTraccarData();
+    });
 
     // WebSocket Realtime Subscribers
     traccarWs.connect();
@@ -565,6 +570,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => {
       clearInterval(intervalId);
       unsubscribe();
+      unsubscribeReconnect();
     };
   }, [evaluateTelemetryRules]);
 
@@ -590,8 +596,8 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       comm_status: 'OFFLINE',
       current_speed: 0,
       current_heading: 0,
-      current_lat: 14.6937,
-      current_lng: -17.4583,
+      current_lat: 14.7869,
+      current_lng: -17.3767,
       battery_level: null,
       ignition_on: false,
       engine_locked: false,

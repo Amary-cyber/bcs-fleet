@@ -5,6 +5,7 @@ import { traccarWs, WebSocketStatus } from '../services/traccar/traccarWebSocket
 interface TraccarContextType {
   traccarConnected: boolean;
   wsStatus: WebSocketStatus;
+  lastSyncTime: string | null;
   checkTraccarHealth: () => Promise<boolean>;
   reconnect: () => void;
 }
@@ -14,10 +15,14 @@ const TraccarContext = createContext<TraccarContextType | undefined>(undefined);
 export const TraccarProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [traccarConnected, setTraccarConnected] = useState<boolean>(false);
   const [wsStatus, setWsStatus] = useState<WebSocketStatus>('DISCONNECTED');
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null);
 
   const checkTraccarHealth = useCallback(async (): Promise<boolean> => {
     const isOnline = await traccarApi.checkConnection();
     setTraccarConnected(isOnline);
+    if (isOnline) {
+      setLastSyncTime(new Date().toISOString());
+    }
     return isOnline;
   }, []);
 
@@ -38,13 +43,16 @@ export const TraccarProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
     });
 
-    // Periodic health check every 30 seconds
+    // Periodic health check every 25 seconds
     const interval = setInterval(() => {
       checkTraccarHealth();
-    }, 30000);
+    }, 25000);
 
     const unsubscribeWs = traccarWs.subscribeStatus((status) => {
       setWsStatus(status);
+      if (status === 'CONNECTED') {
+        setLastSyncTime(new Date().toISOString());
+      }
     });
 
     return () => {
@@ -59,6 +67,7 @@ export const TraccarProvider: React.FC<{ children: React.ReactNode }> = ({ child
       value={{
         traccarConnected,
         wsStatus,
+        lastSyncTime,
         checkTraccarHealth,
         reconnect,
       }}
