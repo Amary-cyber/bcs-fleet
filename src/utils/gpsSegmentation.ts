@@ -16,6 +16,7 @@ export interface GpsDebugInfo {
   rawCount: number;
   validCount: number;
   rejectedCount: number;
+  testPointsExcluded: number;
   segmentsCount: number;
   jumpsDetected: number;
   totalRealDistanceKm: number;
@@ -38,6 +39,25 @@ export interface ProcessedTripHistory {
   startAddress: string;
   endAddress: string;
 }
+
+/**
+ * Deterministically identifies development/deployment bootstrap test packets.
+ * Specifically detects the synthetic test frame injected during port 5055 connectivity validation
+ * (Centre de Dakar: Lat 14.6937, Lng -17.4583 on 2026-08-20) without affecting legitimate telemetry.
+ */
+export const isKnownTestPosition = (
+  lat: number,
+  lng: number,
+  timestampStr?: string
+): boolean => {
+  if (!timestampStr) return false;
+
+  // Exact coordinates of synthetic bootstrap test packet
+  const isBootstrapCoord = Math.abs(lat - 14.6937) < 0.0001 && Math.abs(lng - (-17.4583)) < 0.0001;
+  const isBootstrapTime = timestampStr.startsWith('2026-08-20T21:34:24');
+
+  return isBootstrapCoord && isBootstrapTime;
+};
 
 /**
  * Calculates standard Haversine great-circle distance between two GPS coordinates in kilometers.
@@ -63,7 +83,7 @@ export const calculateHaversineDistanceKm = (
 
 /**
  * Processes raw Traccar positions into validated, chronologically sorted, and jump-protected segments.
- * Eliminates artificial straight lines connecting disconnected telemetry clusters.
+ * Eliminates artificial straight lines and legacy test packets without touching database storage.
  */
 export const processTraccarPositions = (
   rawPositions: TraccarPosition[],
@@ -74,6 +94,7 @@ export const processTraccarPositions = (
     rawCount: rawPositions ? rawPositions.length : 0,
     validCount: 0,
     rejectedCount: 0,
+    testPointsExcluded: 0,
     segmentsCount: 0,
     jumpsDetected: 0,
     totalRealDistanceKm: 0,
@@ -93,7 +114,7 @@ export const processTraccarPositions = (
     };
   }
 
-  // 1. Validation and Extraction
+  // 1. Validation, Test Filter & Numerical Bounds Check
   const validPoints: (RoutePoint & { timeMs: number })[] = [];
   let minLat = 90;
   let maxLat = -90;
@@ -115,6 +136,12 @@ export const processTraccarPositions = (
       lng <= 180 &&
       !isNaN(timeMs)
     ) {
+      // Exclude legacy test packet
+      if (isKnownTestPosition(lat, lng, timeStr)) {
+        debugInfo.testPointsExcluded++;
+        return;
+      }
+
       if (lat < minLat) minLat = lat;
       if (lat > maxLat) maxLat = lat;
       if (lng < minLng) minLng = lng;
@@ -198,8 +225,8 @@ export const processTraccarPositions = (
     const deltaSec = Math.max(1, (curTimeMs - prevTimeMs) / 1000);
     const impliedSpeedKmh = distKm / (deltaSec / 3600);
 
-    // Jump conditions (Prevents artificial lines connecting disconnected GPS clusters):
-    // 1. Distance jump > 3.0 km between 2 discrete points
+    // Jump conditions:
+    // 1. Distance jump > 3.0 km between 2 consecutive points
     // 2. Distance jump > 0.5 km with physically unrealistic speed (> 160 km/h)
     // 3. Time gap > 15 minutes (900s) AND distance > 1.0 km
     const isJump =

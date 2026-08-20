@@ -406,18 +406,23 @@ export const TripHistoryPage: React.FC = () => {
               </div>
 
               <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
+                <div className="text-[10px] text-slate-400">Test Exclus</div>
+                <div className="font-bold text-amber-400">{processedData.debugInfo.testPointsExcluded}</div>
+              </div>
+
+              <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
                 <div className="text-[10px] text-slate-400">Points Rejetés</div>
                 <div className="font-bold text-rose-400">{processedData.debugInfo.rejectedCount}</div>
               </div>
 
               <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
                 <div className="text-[10px] text-slate-400">Segments</div>
-                <div className="font-bold text-amber-400">{processedData.debugInfo.segmentsCount}</div>
+                <div className="font-bold text-cyan-400">{processedData.debugInfo.segmentsCount}</div>
               </div>
 
               <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
                 <div className="text-[10px] text-slate-400">Sauts Détectés</div>
-                <div className="font-bold text-rose-400">{processedData.debugInfo.jumpsDetected}</div>
+                <div className="font-bold text-emerald-400">{processedData.debugInfo.jumpsDetected}</div>
               </div>
 
               <div className="p-2 rounded-lg bg-slate-950/80 border border-slate-800">
