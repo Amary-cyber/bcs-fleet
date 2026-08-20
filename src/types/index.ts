@@ -31,7 +31,10 @@ export interface Vehicle {
   device_id?: string | null;
   device_imei?: string;
   traccar_id?: number;
+  traccar_unique_id?: string;
+  active?: boolean;
   status: VehicleStatus;
+
 
   comm_status: CommunicationStatus;
   current_speed: number; // in km/h

@@ -83,10 +83,14 @@ CREATE TABLE IF NOT EXISTS public.vehicles (
     engine_locked BOOLEAN DEFAULT FALSE,
     odometer_km DOUBLE PRECISION DEFAULT 0.0,
     last_position_time TIMESTAMPTZ,
+    active BOOLEAN DEFAULT TRUE,
+    traccar_id BIGINT,
+    traccar_unique_id TEXT,
     notes TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
 
 -- 6. GEOFENCES TABLE
 CREATE TABLE IF NOT EXISTS public.geofences (
