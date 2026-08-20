@@ -1,24 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import { useFleet } from '../contexts/FleetContext';
-import { useTraccar } from '../contexts/TraccarContext';
 import { traccarApi } from '../services/traccar/traccarApi';
 import { Trip, RoutePoint } from '../types';
-import { MOCK_TRIP } from '../services/demo/demoSimulator';
 import {
   History,
   Play,
   Pause,
   RotateCcw,
   FastForward,
+  Navigation,
+  Calendar,
+  AlertCircle,
+  MapPin,
+  Clock,
+  Gauge,
 } from 'lucide-react';
 
 export const TripHistoryPage: React.FC = () => {
   const { vehicles } = useFleet();
-  const { isDemoMode } = useTraccar();
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(vehicles[0]?.id || 'veh-1');
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(vehicles[0]?.id || '');
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [currentTrip, setCurrentTrip] = useState<Trip>(MOCK_TRIP);
+  const [currentTrip, setCurrentTrip] = useState<Trip | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
 
   // Playback Player State
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
@@ -28,35 +32,30 @@ export const TripHistoryPage: React.FC = () => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const routePolylineRef = useRef<L.Polyline | null>(null);
+  const startMarkerRef = useRef<L.CircleMarker | null>(null);
+  const endMarkerRef = useRef<L.CircleMarker | null>(null);
   const animatedMarkerRef = useRef<L.Marker | null>(null);
   const animationTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  const routePoints = currentTrip.route_points;
-  const currentPoint: RoutePoint = routePoints[playbackIndex] || routePoints[0] || {
-    lat: 14.6937,
-    lng: -17.4583,
-    speed: 0,
-    heading: 0,
-    timestamp: new Date().toISOString(),
-  };
-
-  // Keep selected vehicle valid
+  // Ensure valid selection
   useEffect(() => {
-    if (vehicles.length > 0 && !vehicles.some((v) => v.id === selectedVehicleId)) {
+    if (vehicles.length > 0 && (!selectedVehicleId || !vehicles.some((v) => v.id === selectedVehicleId))) {
       setSelectedVehicleId(vehicles[0].id);
     }
   }, [vehicles, selectedVehicleId]);
 
-  // Fetch real history from Traccar if in MODE LIVE
+  // Fetch real history from Traccar
   useEffect(() => {
     const selectedVeh = vehicles.find((v) => v.id === selectedVehicleId);
-    if (!isDemoMode && selectedVeh && selectedVeh.traccar_id) {
+    if (selectedVeh && selectedVeh.traccar_id) {
+      setIsLoading(true);
       const fromIso = `${selectedDate}T00:00:00Z`;
       const toIso = `${selectedDate}T23:59:59Z`;
 
       traccarApi
         .getDevicePositions(selectedVeh.traccar_id, fromIso, toIso)
         .then((traccarPositions) => {
+          setIsLoading(false);
           if (traccarPositions && traccarPositions.length > 0) {
             const points: RoutePoint[] = traccarPositions.map((p) => ({
               lat: p.latitude,
@@ -79,31 +78,43 @@ export const TripHistoryPage: React.FC = () => {
               }
             });
 
+            const startTime = new Date(points[0].timestamp).getTime();
+            const endTime = new Date(points[points.length - 1].timestamp).getTime();
+            const durationSec = Math.max(0, Math.round((endTime - startTime) / 1000));
+
             setCurrentTrip({
-              id: `trip-traccar-${selectedVeh.traccar_id}`,
+              id: `trip-traccar-${selectedVeh.traccar_id}-${selectedDate}`,
               vehicle_id: selectedVeh.id,
               vehicle_name: selectedVeh.name,
               vehicle_plate: selectedVeh.plate_number,
               start_time: points[0].timestamp,
               end_time: points[points.length - 1].timestamp,
               distance_km: Number(totalDistKm.toFixed(1)),
-              duration_seconds: 3600,
-              avg_speed_kmh: Number((speedSum / points.length).toFixed(1)),
+              duration_seconds: durationSec,
+              avg_speed_kmh: points.length > 0 ? Number((speedSum / points.length).toFixed(1)) : 0,
               max_speed_kmh: maxSpd,
               stops_count: 0,
               stop_duration_seconds: 0,
               route_points: points,
-              start_address: 'Point de départ Traccar',
-              end_address: 'Dernière position Traccar',
+              start_address: `${points[0].lat.toFixed(4)}, ${points[0].lng.toFixed(4)}`,
+              end_address: `${points[points.length - 1].lat.toFixed(4)}, ${points[points.length - 1].lng.toFixed(4)}`,
             });
             setPlaybackIndex(0);
+          } else {
+            setCurrentTrip(null);
           }
         })
-        .catch((err) => console.warn('Notice: Traccar history fetch:', err));
+        .catch((err) => {
+          console.warn('Notice: Traccar history fetch:', err);
+          setIsLoading(false);
+          setCurrentTrip(null);
+        });
+    } else {
+      setCurrentTrip(null);
     }
-  }, [isDemoMode, selectedVehicleId, selectedDate, vehicles]);
+  }, [selectedVehicleId, selectedDate, vehicles]);
 
-  // Initialize Map
+  // Initialize Leaflet Map
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
 
@@ -131,18 +142,21 @@ export const TripHistoryPage: React.FC = () => {
     };
   }, []);
 
+  const routePoints = currentTrip?.route_points || [];
+  const currentPoint: RoutePoint | null = routePoints[playbackIndex] || routePoints[0] || null;
+
   // Draw Route Polyline & Markers
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || routePoints.length === 0) return;
+    if (!map) return;
 
-    // Clear previous polyline
-    if (routePolylineRef.current) {
-      routePolylineRef.current.remove();
-    }
-    if (animatedMarkerRef.current) {
-      animatedMarkerRef.current.remove();
-    }
+    // Clear previous elements
+    if (routePolylineRef.current) routePolylineRef.current.remove();
+    if (startMarkerRef.current) startMarkerRef.current.remove();
+    if (endMarkerRef.current) endMarkerRef.current.remove();
+    if (animatedMarkerRef.current) animatedMarkerRef.current.remove();
+
+    if (!currentTrip || routePoints.length === 0) return;
 
     const latLngs: [number, number][] = routePoints.map((pt) => [pt.lat, pt.lng]);
 
@@ -150,15 +164,13 @@ export const TripHistoryPage: React.FC = () => {
     const polyline = L.polyline(latLngs, {
       color: '#06B6D4',
       weight: 5,
-      opacity: 0.8,
-      dashArray: '8, 8',
+      opacity: 0.85,
     }).addTo(map);
-
     routePolylineRef.current = polyline;
 
     // Start Marker (Green Pin)
     const startPt = routePoints[0];
-    L.circleMarker([startPt.lat, startPt.lng], {
+    startMarkerRef.current = L.circleMarker([startPt.lat, startPt.lng], {
       radius: 8,
       color: '#10B981',
       fillColor: '#10B981',
@@ -169,17 +181,21 @@ export const TripHistoryPage: React.FC = () => {
 
     // End Marker (Red Pin)
     const endPt = routePoints[routePoints.length - 1];
-    L.circleMarker([endPt.lat, endPt.lng], {
+    endMarkerRef.current = L.circleMarker([endPt.lat, endPt.lng], {
       radius: 8,
       color: '#EF4444',
       fillColor: '#EF4444',
       fillOpacity: 1,
     })
-      .bindTooltip('<b>Arrivée</b>: ' + currentTrip.end_address)
+      .bindTooltip('<b>Dernière position</b>: ' + currentTrip.end_address)
       .addTo(map);
 
-    // Fit map bounds to route
-    map.fitBounds(polyline.getBounds(), { padding: [40, 40] });
+    // Fit map bounds
+    if (latLngs.length > 1) {
+      map.fitBounds(polyline.getBounds(), { padding: [40, 40] });
+    } else {
+      map.setView(latLngs[0], 14);
+    }
 
     // Animated Vehicle Marker
     const initialPt = routePoints[playbackIndex] || routePoints[0];
@@ -208,7 +224,7 @@ export const TripHistoryPage: React.FC = () => {
       return;
     }
 
-    const interval = Math.max(200, 1000 / speedMultiplier);
+    const interval = Math.max(100, 1000 / speedMultiplier);
 
     animationTimerRef.current = setInterval(() => {
       setPlaybackIndex((prev) => {
@@ -254,27 +270,31 @@ export const TripHistoryPage: React.FC = () => {
         <div>
           <h1 className="text-xl font-bold text-white font-mono flex items-center gap-2">
             <History className="w-6 h-6 text-cyan-400" />
-            HISTORIQUE DES TRAJETS &amp; REPLAY ANIMÉ
+            HISTORIQUE DES TRAJETS &amp; REPLAY GPS RÉEL
           </h1>
           <p className="text-xs text-slate-400 mt-1">
-            Sélectionnez un véhicule et une date pour rejouer l'animation précise du parcours.
+            Sélectionnez un véhicule et une date pour consulter et rejouer les positions GPS réelles enregistrées par Traccar.
           </p>
         </div>
 
         {/* Filter Inputs */}
         <div className="flex flex-wrap items-center gap-3">
           <div>
-            <label className="block text-[10px] text-slate-400 mb-1 font-semibold">Véhicule</label>
+            <label className="block text-[10px] text-slate-400 mb-1 font-semibold">Véhicule Réel</label>
             <select
               value={selectedVehicleId}
               onChange={(e) => setSelectedVehicleId(e.target.value)}
               className="bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:border-cyan-500 font-mono"
             >
-              {vehicles.map((v) => (
-                <option key={v.id} value={v.id}>
-                  {v.name} ({v.plate_number})
-                </option>
-              ))}
+              {vehicles.length === 0 ? (
+                <option value="">Aucun véhicule disponible</option>
+              ) : (
+                vehicles.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name} ({v.plate_number})
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
@@ -291,49 +311,46 @@ export const TripHistoryPage: React.FC = () => {
       </div>
 
       {/* Trip Statistics Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
-          <div className="text-[10px] font-semibold text-slate-400">Distance Totale</div>
-          <div className="text-lg font-black text-cyan-400 font-mono mt-1">
-            {currentTrip.distance_km} km
+      {currentTrip ? (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
+            <div className="text-[10px] font-semibold text-slate-400">Distance Totale Réelle</div>
+            <div className="text-lg font-black text-cyan-400 font-mono mt-1">
+              {currentTrip.distance_km} km
+            </div>
           </div>
-        </div>
 
-        <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
-          <div className="text-[10px] font-semibold text-slate-400">Durée Trajet</div>
-          <div className="text-lg font-black text-emerald-400 font-mono mt-1">
-            1h 45m
+          <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
+            <div className="text-[10px] font-semibold text-slate-400">Points GPS Reçus</div>
+            <div className="text-lg font-black text-emerald-400 font-mono mt-1">
+              {routePoints.length} points
+            </div>
           </div>
-        </div>
 
-        <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
-          <div className="text-[10px] font-semibold text-slate-400">Vitesse Moyenne</div>
-          <div className="text-lg font-black text-white font-mono mt-1">
-            {currentTrip.avg_speed_kmh} km/h
+          <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
+            <div className="text-[10px] font-semibold text-slate-400">Vitesse Moyenne</div>
+            <div className="text-lg font-black text-white font-mono mt-1">
+              {currentTrip.avg_speed_kmh} km/h
+            </div>
           </div>
-        </div>
 
-        <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
-          <div className="text-[10px] font-semibold text-slate-400">Vitesse Max</div>
-          <div className="text-lg font-black text-rose-400 font-mono mt-1">
-            {currentTrip.max_speed_kmh} km/h
+          <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
+            <div className="text-[10px] font-semibold text-slate-400">Vitesse Max Enregistrée</div>
+            <div className="text-lg font-black text-rose-400 font-mono mt-1">
+              {currentTrip.max_speed_kmh} km/h
+            </div>
           </div>
         </div>
-
-        <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
-          <div className="text-[10px] font-semibold text-slate-400">Nombre d'Arrêts</div>
-          <div className="text-lg font-black text-amber-400 font-mono mt-1">
-            {currentTrip.stops_count} arrêts
-          </div>
+      ) : (
+        <div className="p-4 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-400 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-cyan-400 shrink-0" />
+          <span>
+            {isLoading
+              ? 'Chargement des positions Traccar en cours...'
+              : 'Aucune donnée GPS enregistrée pour cette période.'}
+          </span>
         </div>
-
-        <div className="glass-panel p-3.5 rounded-xl border border-slate-800">
-          <div className="text-[10px] font-semibold text-slate-400">Temps d'Arrêt Total</div>
-          <div className="text-lg font-black text-slate-300 font-mono mt-1">
-            15 min
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* Map & Animated Controls Section */}
       <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-4">
@@ -342,70 +359,93 @@ export const TripHistoryPage: React.FC = () => {
           <div ref={mapContainerRef} className="w-full h-full" />
 
           {/* Telemetry Overlay Card */}
-          <div className="absolute top-4 left-4 glass-card p-3 rounded-xl border border-slate-700/80 z-20 text-xs font-mono space-y-1">
-            <div className="text-cyan-400 font-bold">{currentTrip.vehicle_name}</div>
-            <div className="text-white">Vitesse: <span className="font-bold">{currentPoint.speed} km/h</span></div>
-            <div className="text-slate-400">Heure: {new Date(currentPoint.timestamp).toLocaleTimeString()}</div>
-          </div>
+          {currentTrip && currentPoint && (
+            <div className="absolute top-4 left-4 glass-card p-3 rounded-xl border border-slate-700/80 z-20 text-xs font-mono space-y-1">
+              <div className="text-cyan-400 font-bold">{currentTrip.vehicle_name}</div>
+              <div className="text-white">
+                Vitesse: <span className="font-bold">{currentPoint.speed} km/h</span>
+              </div>
+              <div className="text-slate-400">
+                Heure:{' '}
+                {new Date(currentPoint.timestamp).toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })}
+              </div>
+            </div>
+          )}
+
+          {!currentTrip && !isLoading && (
+            <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm z-10 flex flex-col items-center justify-center text-slate-400 text-xs gap-2">
+              <Navigation className="w-8 h-8 text-slate-600 animate-pulse" />
+              <span className="font-semibold text-slate-300">Aucune trace GPS disponible pour la date sélectionnée.</span>
+              <span className="text-[11px] text-slate-500">
+                Les coordonnées proviennent exclusivement des réceptions Traccar en production.
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Animated Playback Controls Bar */}
-        <div className="glass-panel p-4 rounded-xl border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
-          {/* Controls: Play/Pause/Reset */}
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => setIsPlaying(!isPlaying)}
-              className="p-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold transition-all shadow-lg shadow-cyan-950/50"
-              title={isPlaying ? 'Pause' : 'Lecture'}
-            >
-              {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 fill-current" />}
-            </button>
+        {currentTrip && routePoints.length > 0 && (
+          <div className="glass-panel p-4 rounded-xl border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
+            {/* Controls: Play/Pause/Reset */}
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setIsPlaying(!isPlaying)}
+                className="p-3 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold transition-all shadow-lg shadow-cyan-950/50"
+                title={isPlaying ? 'Pause' : 'Lecture Replay'}
+              >
+                {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 fill-current" />}
+              </button>
 
-            <button
-              onClick={() => {
-                setIsPlaying(false);
-                setPlaybackIndex(0);
-              }}
-              className="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-              title="Réinitialiser le trajet"
-            >
-              <RotateCcw className="w-5 h-5" />
-            </button>
+              <button
+                onClick={() => {
+                  setIsPlaying(false);
+                  setPlaybackIndex(0);
+                }}
+                className="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                title="Réinitialiser le trajet"
+              >
+                <RotateCcw className="w-5 h-5" />
+              </button>
 
-            {/* Speed Multiplier */}
-            <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
-              <FastForward className="w-3.5 h-3.5 text-slate-400 ml-1.5" />
-              {[1, 2, 4, 8, 16].map((mult) => (
-                <button
-                  key={mult}
-                  onClick={() => setSpeedMultiplier(mult)}
-                  className={`px-2 py-1 rounded-lg font-bold transition-all ${
-                    speedMultiplier === mult
-                      ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40'
-                      : 'text-slate-500 hover:text-slate-300'
-                  }`}
-                >
-                  {mult}x
-                </button>
-              ))}
+              {/* Speed Multiplier */}
+              <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                <FastForward className="w-3.5 h-3.5 text-slate-400 ml-1.5" />
+                {[1, 2, 4, 8, 16].map((mult) => (
+                  <button
+                    key={mult}
+                    onClick={() => setSpeedMultiplier(mult)}
+                    className={`px-2 py-1 rounded-lg font-bold transition-all ${
+                      speedMultiplier === mult
+                        ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40'
+                        : 'text-slate-500 hover:text-slate-300'
+                    }`}
+                  >
+                    {mult}x
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Timeline Seek Slider */}
+            <div className="flex-1 w-full flex items-center space-x-3">
+              <span className="text-xs font-mono text-slate-400 shrink-0">
+                {playbackIndex + 1} / {routePoints.length}
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={routePoints.length - 1}
+                value={playbackIndex}
+                onChange={(e) => setPlaybackIndex(Number(e.target.value))}
+                className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+              />
             </div>
           </div>
-
-          {/* Timeline Seek Slider */}
-          <div className="flex-1 w-full flex items-center space-x-3">
-            <span className="text-xs font-mono text-slate-400 shrink-0">
-              {playbackIndex + 1} / {routePoints.length}
-            </span>
-            <input
-              type="range"
-              min={0}
-              max={routePoints.length - 1}
-              value={playbackIndex}
-              onChange={(e) => setPlaybackIndex(Number(e.target.value))}
-              className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
-            />
-          </div>
-        </div>
+        )}
       </div>
     </div>
   );

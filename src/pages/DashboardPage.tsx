@@ -36,7 +36,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   onOpenImmobilizer,
 }) => {
   const { user } = useAuth();
-  const { isDemoMode } = useTraccar();
+  const { traccarConnected } = useTraccar();
   const {
     vehicles,
     geofences,
@@ -56,7 +56,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [filterGeofenceId, setFilterGeofenceId] = useState('ALL');
   const [filterVehicleType, setFilterVehicleType] = useState('ALL');
 
-  // Real KPI Metrics derived from FleetContext state
+  // Real KPI Metrics derived strictly from real Traccar telemetry state
   const totalVehicles = vehicles.length;
   const movingVehicles = vehicles.filter((v) => v.status === 'MOVING');
   const stoppedVehicles = vehicles.filter((v) => v.status === 'STOPPED');
@@ -105,7 +105,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const activeSchedulesCount = maintenanceSchedules.filter((s) => s.active).length;
   const upcomingSchedules = maintenanceSchedules.slice(0, 3);
 
-  // Total Fleet Distance estimated from odometers
+  // Total Fleet Distance from actual odometers
   const totalFleetDistanceKm = vehicles.reduce((acc, v) => acc + (v.odometer_km || 0), 0);
 
   // Helper date range label
@@ -133,19 +133,20 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight flex items-center gap-2">
               Bonjour, {user?.full_name?.split(' ')[0] || 'Amary'} 👋
             </h1>
-            {isDemoMode ? (
-              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
-                Mode Démo Dakar
-              </span>
-            ) : (
+            {traccarConnected ? (
               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
                 Flotte Live Connectée
               </span>
+            ) : (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
+                Serveur Traccar en attente
+              </span>
             )}
           </div>
           <p className="text-xs sm:text-sm text-slate-400 mt-1">
-            Voici l'état global et la télémétrie de votre flotte automobile aujourd'hui.
+            Supervision en temps réel de votre flotte automobile basée exclusivement sur la télémétrie Traccar.
           </p>
         </div>
 
@@ -221,7 +222,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           </div>
           <div className="flex items-center space-x-1 text-[11px] font-semibold text-emerald-400 mt-2">
             <TrendingUp className="w-3 h-3 inline" />
-            <span>100% enregistrés</span>
+            <span>{totalVehicles > 0 ? `${totalVehicles} actif(s)` : '0 actif'}</span>
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-cyan-500 to-teal-500" />
         </div>
@@ -245,7 +246,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </span>
           </div>
           <div className="text-[11px] text-slate-400 mt-2 truncate">
-            Signal GPS actif &lt; 2min
+            {onlineVehicles.length > 0 ? 'Signal GPS reçu' : 'Aucun signal actif'}
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />
         </div>
@@ -272,7 +273,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </span>
           </div>
           <div className="text-[11px] font-mono text-slate-300 mt-2 truncate">
-            Vitesse moy: <strong className="text-emerald-400">{avgSpeed} km/h</strong>
+            {movingVehicles.length > 0 ? (
+              <>Vitesse moy: <strong className="text-emerald-400">{avgSpeed} km/h</strong></>
+            ) : (
+              '0 km/h (Flotte immobile)'
+            )}
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-400" />
         </div>
@@ -326,7 +331,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </span>
           </div>
           <div className="text-[11px] text-slate-500 mt-2 truncate">
-            Aucun signal &gt; 1h
+            {offlineVehicles.length > 0 ? 'Sans transmission récente' : 'Tous les traceurs émettent'}
           </div>
           <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-700" />
         </div>
@@ -428,10 +433,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             {/* Floating Quick Stats Over Map */}
             <div className="absolute bottom-4 left-4 z-10 hidden sm:flex items-center space-x-2 bg-slate-900/90 backdrop-blur-md px-3.5 py-2 rounded-xl border border-slate-800 shadow-xl text-xs font-mono">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-slate-400 font-sans">Affichés:</span>
-              <span className="font-bold text-white">{displayedVehicles.length} véhicules</span>
+              <span className="text-slate-400 font-sans">Véhicules réels connectés:</span>
+              <span className="font-bold text-white">{displayedVehicles.length}</span>
               <span className="text-slate-600">•</span>
-              <span className="text-slate-400 font-sans">Zones:</span>
+              <span className="text-slate-400 font-sans">Zones configurées:</span>
               <span className="font-bold text-cyan-400">{geofences.length}</span>
             </div>
           </div>
@@ -498,7 +503,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               >
                 <div className="flex items-center space-x-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shadow-sm shadow-amber-400" />
-                  <span className="text-slate-300 font-medium">À l'arrêt (Moteur coupé)</span>
+                  <span className="text-slate-300 font-medium">À l'arrêt</span>
                 </div>
                 <div className="flex items-center space-x-2 font-mono font-bold">
                   <span className="text-white">{stoppedVehicles.length}</span>
@@ -614,39 +619,19 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </span>
           </div>
 
-          {/* Activity Bar Chart representation */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
-              <span>Activité horaire (24h)</span>
-              <span className="text-white">Pic: {movingVehicles.length} véhicules</span>
-            </div>
-            <div className="h-16 flex items-end gap-1.5 pt-2 px-1 bg-slate-950/60 rounded-xl border border-slate-800/80">
-              {[15, 20, 10, 8, 12, 35, 60, 85, 95, 80, 75, 90, 85, 70, 65, 80, 90, 75, 60, 45, 30, 25, 20, 15].map(
-                (val, idx) => (
-                  <div
-                    key={idx}
-                    style={{ height: `${val}%` }}
-                    className="flex-1 bg-gradient-to-t from-cyan-500/50 to-cyan-400 rounded-t-sm hover:from-cyan-400 hover:to-teal-300 transition-all cursor-pointer"
-                    title={`${idx}h00: ~${Math.round((val / 100) * totalVehicles)} véhicules actifs`}
-                  />
-                )
-              )}
-            </div>
-          </div>
-
           {/* Metric Stats Grid */}
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="p-2.5 rounded-xl bg-slate-950/50 border border-slate-800">
-              <div className="text-[10px] text-slate-400">Distance Flotte</div>
-              <div className="text-sm font-black font-mono text-white mt-0.5">
-                {totalFleetDistanceKm > 0 ? `${totalFleetDistanceKm.toLocaleString()} km` : '1 482 km (Auj.)'}
+          <div className="grid grid-cols-2 gap-2 text-xs pt-2">
+            <div className="p-3 rounded-xl bg-slate-950/50 border border-slate-800">
+              <div className="text-[10px] text-slate-400">Distance Flotte Réelle</div>
+              <div className="text-base font-black font-mono text-white mt-1">
+                {totalFleetDistanceKm > 0 ? `${totalFleetDistanceKm.toLocaleString()} km` : '0 km'}
               </div>
             </div>
 
-            <div className="p-2.5 rounded-xl bg-slate-950/50 border border-slate-800">
+            <div className="p-3 rounded-xl bg-slate-950/50 border border-slate-800">
               <div className="text-[10px] text-slate-400">Vitesse Moyenne</div>
-              <div className="text-sm font-black font-mono text-cyan-400 mt-0.5">
-                {avgSpeed > 0 ? `${avgSpeed} km/h` : '38 km/h'}
+              <div className="text-base font-black font-mono text-cyan-400 mt-1">
+                {avgSpeed > 0 ? `${avgSpeed} km/h` : '0 km/h'}
               </div>
             </div>
           </div>
@@ -676,7 +661,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
             <div className="p-2 rounded-xl bg-cyan-500/10 border border-cyan-500/20">
               <div className="text-base font-black font-mono text-cyan-400">{activeSchedulesCount}</div>
-              <div className="text-[10px] font-bold text-cyan-300">Règles Actives</div>
+              <div className="text-[10px] font-bold text-cyan-300">Règles</div>
             </div>
 
             <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
@@ -689,7 +674,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <div className="space-y-1.5 text-xs">
             {upcomingSchedules.length === 0 ? (
               <div className="text-center py-4 text-slate-500 text-xs">
-                Aucune règle d'entretien programmée.
+                Aucune échéance d'entretien enregistrée.
               </div>
             ) : (
               upcomingSchedules.map((s) => (
@@ -729,7 +714,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           {/* TCO Highlights */}
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
-              <div className="text-[10px] text-slate-400">Total Dépenses</div>
+              <div className="text-[10px] text-slate-400">Total Dépenses Réelles</div>
               <div className="text-base font-black font-mono text-white mt-0.5">
                 {tcoSummary.totalCost.toLocaleString()} FCFA
               </div>
@@ -738,7 +723,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             <div className="p-2.5 rounded-xl bg-slate-950/60 border border-slate-800">
               <div className="text-[10px] text-slate-400">Coût Moyen / Km</div>
               <div className="text-base font-black font-mono text-emerald-400 mt-0.5">
-                {tcoSummary.costPerKm ? `${tcoSummary.costPerKm} F/km` : '78 F/km'}
+                {tcoSummary.costPerKm !== null ? `${tcoSummary.costPerKm} F/km` : '0 F/km'}
               </div>
             </div>
           </div>
@@ -757,7 +742,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   width: `${
                     tcoSummary.totalCost > 0
                       ? Math.round(((tcoSummary.costByCategory.CARBURANT || 0) / tcoSummary.totalCost) * 100)
-                      : 65
+                      : 0
                   }%`,
                 }}
                 className="bg-cyan-400 h-full rounded-full"
@@ -785,7 +770,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                             tcoSummary.totalCost) *
                             100
                         )
-                      : 25
+                      : 0
                   }%`,
                 }}
                 className="bg-amber-400 h-full rounded-full"

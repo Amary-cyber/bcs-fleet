@@ -15,13 +15,8 @@ import {
   LogOut,
   SlidersHorizontal,
   Flame,
-  CheckCircle2,
-  AlertCircle,
   Car,
-  User,
   MapPin,
-  Sparkles,
-  Command,
 } from 'lucide-react';
 
 interface TelematicsHeaderProps {
@@ -34,7 +29,7 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
   onMobileMenuToggle,
 }) => {
   const { user, role, logout, switchRole } = useAuth();
-  const { isDemoMode, toggleDemoMode, traccarConnected } = useTraccar();
+  const { traccarConnected, wsStatus, reconnect } = useTraccar();
   const { vehicles, alerts } = useFleet();
   const { theme, toggleTheme } = useTheme();
   const { setDrawerOpen } = useNotifications();
@@ -108,7 +103,7 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
                 BCS <span className="text-cyan-400">FLEET</span>
               </span>
               <span className="hidden xl:inline-block px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-                PRO SaaS
+                PRO PRODUCTION
               </span>
             </div>
             <p className="text-[9px] text-slate-400 font-medium tracking-wider hidden sm:block">
@@ -117,36 +112,32 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
           </div>
         </div>
 
-        {/* LIVE / DEMO Indicator Pill */}
+        {/* Real Production Traccar Status Pill */}
         <div className="hidden sm:flex items-center pl-2 border-l border-slate-800/80">
-          {isDemoMode ? (
-            <button
-              onClick={() => toggleDemoMode(false)}
-              className="group flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 hover:border-amber-500/50 transition-all shadow-sm"
-              title="Cliquer pour basculer en MODE LIVE (Traccar 6.5)"
-            >
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-              </span>
-              <span>MODE DEMO</span>
-              <span className="text-[10px] text-amber-300/80 font-normal hidden md:inline">
-                (Dakar Sim)
-              </span>
-            </button>
-          ) : (
-            <button
-              onClick={() => toggleDemoMode(true)}
-              className="group flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 hover:border-emerald-500/50 transition-all shadow-sm shadow-emerald-950/40"
-              title="Cliquer pour basculer en MODE DEMO"
+          {traccarConnected ? (
+            <div
+              className="flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shadow-sm shadow-emerald-950/40"
+              title="Traccar 6.5 connecté et flux télématique en temps réel"
             >
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span className="tracking-wide">● LIVE</span>
+              <span className="tracking-wide">● TRACCAR CONNECTÉ</span>
               <span className="text-[10px] font-mono text-emerald-300/90 hidden lg:inline">
-                {traccarConnected ? 'Traccar Connecté' : 'En attente...'}
+                {wsStatus === 'CONNECTED' ? '(WebSocket Actif)' : '(Télémétrie REST)'}
+              </span>
+            </div>
+          ) : (
+            <button
+              onClick={reconnect}
+              className="flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30 hover:bg-rose-500/20 transition-all shadow-sm"
+              title="Cliquer pour tenter une reconnexion à Traccar"
+            >
+              <span className="w-2 h-2 rounded-full bg-rose-500" />
+              <span>● TRACCAR HORS LIGNE</span>
+              <span className="text-[10px] text-rose-300 font-normal hidden md:inline">
+                (Reconnexion)
               </span>
             </button>
           )}
@@ -218,7 +209,7 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
 
       {/* Right: Quick Tools (Role Switcher, Notifications, Theme, Profile) */}
       <div className="flex items-center space-x-2 sm:space-x-3">
-        {/* Role Switcher Pill (Dev / Admin Utility) */}
+        {/* Role Switcher Pill */}
         <div className="hidden xl:flex items-center space-x-1 bg-slate-950/70 p-1 rounded-xl border border-slate-800 text-[10px]">
           <Shield className="w-3.5 h-3.5 text-cyan-400 ml-1.5" />
           <span className="font-medium text-slate-400 mr-1">Rôle:</span>

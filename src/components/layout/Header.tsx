@@ -13,12 +13,11 @@ import {
   SlidersHorizontal,
   Sun,
   Moon,
-  Flame,
 } from 'lucide-react';
 
 export const Header: React.FC<{ onMobileMenuToggle: () => void }> = ({ onMobileMenuToggle }) => {
   const { user, role, logout, switchRole } = useAuth();
-  const { isDemoMode, toggleDemoMode, traccarConnected } = useTraccar();
+  const { traccarConnected, reconnect } = useTraccar();
   const { alerts } = useFleet();
   const { setDrawerOpen } = useNotifications();
   const { theme, toggleTheme } = useTheme();
@@ -37,38 +36,28 @@ export const Header: React.FC<{ onMobileMenuToggle: () => void }> = ({ onMobileM
           <SlidersHorizontal className="w-5 h-5" />
         </button>
 
-        {/* Status Mode Badge */}
+        {/* Traccar Status Pill */}
         <div className="flex items-center space-x-2">
-          {isDemoMode ? (
+          {traccarConnected ? (
             <span
-              onClick={() => toggleDemoMode(false)}
-              className="cursor-pointer group flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 transition-all shadow-sm"
-              title="Cliquer pour basculer en MODE LIVE avec Traccar"
-            >
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
-              </span>
-              <span>MODE DEMO</span>
-              <span className="hidden sm:inline text-[10px] text-amber-300 opacity-70 group-hover:opacity-100">
-                (Simulateur Dakar)
-              </span>
-            </span>
-          ) : (
-            <span
-              onClick={() => toggleDemoMode(true)}
-              className="cursor-pointer group flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/20 transition-all shadow-sm"
-              title="Cliquer pour repasser en MODE DEMO"
+              className="flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shadow-sm"
+              title="Serveur Traccar 6.5 connecté et opérationnel"
             >
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span>● MODE LIVE</span>
-              <span className="hidden sm:inline text-[10px] text-emerald-300 opacity-70">
-                {traccarConnected ? 'Traccar Connecté' : 'Traccar En attente'}
-              </span>
+              <span>● TRACCAR CONNECTÉ</span>
             </span>
+          ) : (
+            <button
+              onClick={reconnect}
+              className="flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30 hover:bg-rose-500/20 transition-all shadow-sm"
+              title="Cliquer pour reconnecter le serveur Traccar"
+            >
+              <span className="w-2 h-2 rounded-full bg-rose-500" />
+              <span>● TRACCAR HORS LIGNE</span>
+            </button>
           )}
         </div>
       </div>

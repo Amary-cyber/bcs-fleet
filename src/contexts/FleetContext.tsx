@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Vehicle,
   Driver,
@@ -17,21 +17,9 @@ import {
   TCOSummary,
   ExpenseCategory,
 } from '../types';
-import { useTraccar } from './TraccarContext';
 import { useAuth } from './AuthContext';
 import { traccarApi } from '../services/traccar/traccarApi';
 import { traccarWs } from '../services/traccar/traccarWebSocket';
-import {
-  demoSimulator,
-  DAKAR_GEOFENCES,
-  DEMO_DRIVERS,
-  DEMO_DEVICES,
-  INITIAL_DEMO_VEHICLES,
-  DEMO_MAINTENANCE_RECORDS,
-  DEMO_MAINTENANCE_SCHEDULES,
-  DEMO_VEHICLE_DOCUMENTS,
-  DEMO_EXPENSES,
-} from '../services/demo/demoSimulator';
 
 interface FleetContextType {
   vehicles: Vehicle[];
@@ -140,50 +128,96 @@ const isPointInPolygon = (lat: number, lng: number, polygon: [number, number][])
   return inside;
 };
 
+// Safe JSON parser for localStorage persistence
+function loadPersisted<T>(key: string, defaultValue: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : defaultValue;
+  } catch {
+    return defaultValue;
+  }
+}
+
 const FleetContext = createContext<FleetContextType | undefined>(undefined);
 
 export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isDemoMode } = useTraccar();
   const { user } = useAuth();
 
+  // 100% Real Production State with local persistence
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [drivers, setDrivers] = useState<Driver[]>(DEMO_DRIVERS);
-  const [devices, setDevices] = useState<Device[]>(DEMO_DEVICES);
-  const [geofences, setGeofences] = useState<Geofence[]>(DAKAR_GEOFENCES);
+  const [drivers, setDrivers] = useState<Driver[]>(() => loadPersisted('bcs_fleet_drivers', []));
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [geofences, setGeofences] = useState<Geofence[]>(() => loadPersisted('bcs_fleet_geofences', []));
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [toastNotification, setToastNotification] = useState<Alert | null>(null);
-  const [alertRules, setAlertRules] = useState<AlertRuleConfig>(DEFAULT_ALERT_RULES);
-  const [settings, setSettings] = useState<CompanySettings>(DEFAULT_SETTINGS);
+  const [alertRules, setAlertRules] = useState<AlertRuleConfig>(() =>
+    loadPersisted('bcs_fleet_alert_rules', DEFAULT_ALERT_RULES)
+  );
+  const [settings, setSettings] = useState<CompanySettings>(() =>
+    loadPersisted('bcs_fleet_settings', DEFAULT_SETTINGS)
+  );
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
 
   // Maintenance & Expenses State
-  const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>(DEMO_MAINTENANCE_RECORDS);
-  const [maintenanceSchedules, setMaintenanceSchedules] = useState<MaintenanceSchedule[]>(DEMO_MAINTENANCE_SCHEDULES);
-  const [vehicleDocuments, setVehicleDocuments] = useState<VehicleDocument[]>(DEMO_VEHICLE_DOCUMENTS);
-  const [expenses, setExpenses] = useState<Expense[]>(DEMO_EXPENSES);
+  const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>(() =>
+    loadPersisted('bcs_fleet_maint_records', [])
+  );
+  const [maintenanceSchedules, setMaintenanceSchedules] = useState<MaintenanceSchedule[]>(() =>
+    loadPersisted('bcs_fleet_maint_schedules', [])
+  );
+  const [vehicleDocuments, setVehicleDocuments] = useState<VehicleDocument[]>(() =>
+    loadPersisted('bcs_fleet_veh_docs', [])
+  );
+  const [expenses, setExpenses] = useState<Expense[]>(() => loadPersisted('bcs_fleet_expenses', []));
+  const [auditLogs, setAuditLogs] = useState<AuditLog[]>(() => loadPersisted('bcs_fleet_audit_logs', []));
 
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([
-    {
-      id: 'log-1',
-      user_email: 'admin@bcsfleet.sn',
-      user_role: 'ADMIN',
-      action: 'SYSTEM_BOOTUP',
-      details: { mode: isDemoMode ? 'MODE DEMO' : 'MODE LIVE', location: 'Dakar' },
-      created_at: new Date().toISOString(),
-    },
-  ]);
+  // Persist state updates to localStorage
+  useEffect(() => {
+    localStorage.setItem('bcs_fleet_drivers', JSON.stringify(drivers));
+  }, [drivers]);
 
-  // Anti-Spam Idempotency Trackers (Refs to avoid React re-render loops)
+  useEffect(() => {
+    localStorage.setItem('bcs_fleet_geofences', JSON.stringify(geofences));
+  }, [geofences]);
+
+  useEffect(() => {
+    localStorage.setItem('bcs_fleet_maint_records', JSON.stringify(maintenanceRecords));
+  }, [maintenanceRecords]);
+
+  useEffect(() => {
+    localStorage.setItem('bcs_fleet_maint_schedules', JSON.stringify(maintenanceSchedules));
+  }, [maintenanceSchedules]);
+
+  useEffect(() => {
+    localStorage.setItem('bcs_fleet_veh_docs', JSON.stringify(vehicleDocuments));
+  }, [vehicleDocuments]);
+
+  useEffect(() => {
+    localStorage.setItem('bcs_fleet_expenses', JSON.stringify(expenses));
+  }, [expenses]);
+
+  useEffect(() => {
+    localStorage.setItem('bcs_fleet_audit_logs', JSON.stringify(auditLogs));
+  }, [auditLogs]);
+
+  useEffect(() => {
+    localStorage.setItem('bcs_fleet_alert_rules', JSON.stringify(alertRules));
+  }, [alertRules]);
+
+  useEffect(() => {
+    localStorage.setItem('bcs_fleet_settings', JSON.stringify(settings));
+  }, [settings]);
+
+  // Anti-Spam Idempotency Trackers
   const speedingStateRef = useRef<Record<string, boolean>>({});
   const geofenceStateRef = useRef<Record<string, Record<string, 'INSIDE' | 'OUTSIDE'>>>({});
   const lowBatteryStateRef = useRef<Record<string, boolean>>({});
   const processedEventIdsRef = useRef<Set<string>>(new Set());
-  const maintenanceAlertsRef = useRef<Set<string>>(new Set());
 
   const clearToast = () => setToastNotification(null);
 
-  // Helper to add an alert with Browser Notification & Toast
-  const createAlert = (alertData: Omit<Alert, 'id' | 'is_read' | 'timestamp'>) => {
+  // Helper to add an alert
+  const createAlert = useCallback((alertData: Omit<Alert, 'id' | 'is_read' | 'timestamp'>) => {
     const newAlert: Alert = {
       ...alertData,
       id: `alt-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
@@ -206,7 +240,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         console.warn('Browser notification notice:', err);
       }
     }
-  };
+  }, []);
 
   // Request Browser Notification Permission once
   useEffect(() => {
@@ -215,7 +249,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, []);
 
-  // Helper to convert Traccar Position & Device to Vehicle object
+  // Convert real Traccar Device & Position to Vehicle object
   const buildLiveVehicleFromTraccar = (
     device: TraccarDevice,
     position?: TraccarPosition,
@@ -234,6 +268,10 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         : isMoving
         ? 'MOVING'
         : 'STOPPED';
+
+    const lastPosTime = position?.fixTime || position?.deviceTime || device.lastUpdate || new Date().toISOString();
+    const odometerMeters = position?.attributes?.totalDistance || position?.attributes?.distance || 0;
+    const odometerKm = Math.round((odometerMeters / 1000) * 10) / 10;
 
     if (existingMetier) {
       return {
@@ -254,21 +292,22 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             ? position.attributes.battery
             : existingMetier.battery_level,
         ignition_on: position?.attributes?.ignition ?? existingMetier.ignition_on,
-        last_position_time: position?.fixTime || position?.deviceTime || device.lastUpdate || existingMetier.last_position_time,
+        odometer_km: odometerKm > 0 ? odometerKm : existingMetier.odometer_km || 0,
+        last_position_time: lastPosTime,
         active: true,
       };
     }
 
     return {
       id: `veh-traccar-${device.id}`,
-      name: device.name || `Véhicule ${device.uniqueId}`,
+      name: device.name || `Traceur GPS (${device.uniqueId})`,
       plate_number: device.uniqueId,
-      brand: 'Traceur',
-      model: 'GPS Traccar',
+      brand: 'GPS Traccar',
+      model: 'Traceur',
       year: 2024,
       color: 'Gris',
       vehicle_type: 'PICKUP',
-      group_name: 'FLOTTE LIVE',
+      group_name: 'FLOTTE ACTIVE',
       traccar_id: device.id,
       device_id: device.id.toString(),
       device_imei: device.uniqueId,
@@ -277,261 +316,257 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       comm_status: commStatus,
       current_speed: effectiveSpeed,
       current_heading: position ? Math.round(position.course || 0) : 0,
-      current_lat: position ? position.latitude : 14.7869,
-      current_lng: position ? position.longitude : -17.3767,
-      battery_level: position?.attributes?.batteryLevel ?? position?.attributes?.battery ?? 80,
+      current_lat: position ? position.latitude : 14.6937,
+      current_lng: position ? position.longitude : -17.4583,
+      battery_level: position?.attributes?.batteryLevel ?? position?.attributes?.battery ?? null,
       ignition_on: position?.attributes?.ignition ?? false,
       engine_locked: false,
-      odometer_km: 0,
-      last_position_time: position?.fixTime || position?.deviceTime || device.lastUpdate || new Date().toISOString(),
+      odometer_km: odometerKm,
+      last_position_time: lastPosTime,
       active: true,
     };
   };
 
-  // Evaluate Rules Engine for a Vehicle Telemetry Update
-  const evaluateTelemetryRules = (vehicle: Vehicle) => {
-    if (isDemoMode) return;
+  // Evaluate Rules Engine on Real Telemetry Update
+  const evaluateTelemetryRules = useCallback(
+    (vehicle: Vehicle) => {
+      // 1. SPEEDING EVALUATION
+      if (alertRules.notify_speeding && vehicle.current_speed > 0) {
+        const speedLimit = alertRules.speed_limit_kmh + alertRules.speed_tolerance_kmh;
+        const vehId = vehicle.id;
+        const isCurrentlySpeeding = vehicle.current_speed > speedLimit;
+        const wasSpeeding = speedingStateRef.current[vehId] || false;
 
-    // 1. SPEEDING EVALUATION
-    if (alertRules.notify_speeding && vehicle.current_speed > 0) {
-      const speedLimit = alertRules.speed_limit_kmh + alertRules.speed_tolerance_kmh;
-      const vehId = vehicle.id;
-      const isCurrentlySpeeding = vehicle.current_speed > speedLimit;
-      const wasSpeeding = speedingStateRef.current[vehId] || false;
-
-      if (isCurrentlySpeeding && !wasSpeeding) {
-        speedingStateRef.current[vehId] = true;
-        createAlert({
-          vehicle_id: vehicle.id,
-          vehicle_name: vehicle.name,
-          vehicle_plate: vehicle.plate_number,
-          traccar_device_id: vehicle.traccar_id,
-          alert_type: 'SPEEDING',
-          severity: 'WARNING',
-          title: `🚨 EXCÈS DE VITESSE: ${vehicle.name}`,
-          message: `Vitesse mesurée à ${vehicle.current_speed} km/h (Limite: ${alertRules.speed_limit_kmh} km/h).`,
-          speed: vehicle.current_speed,
-          speed_limit: alertRules.speed_limit_kmh,
-          lat: vehicle.current_lat,
-          lng: vehicle.current_lng,
-        });
-      } else if (vehicle.current_speed <= alertRules.speed_limit_kmh && wasSpeeding) {
-        speedingStateRef.current[vehId] = false;
-      }
-    }
-
-    // 2. GEOFENCES ENTER / EXIT EVALUATION
-    if (alertRules.notify_geofence && vehicle.current_lat && vehicle.current_lng) {
-      const vehId = vehicle.id;
-      if (!geofenceStateRef.current[vehId]) {
-        geofenceStateRef.current[vehId] = {};
+        if (isCurrentlySpeeding && !wasSpeeding) {
+          speedingStateRef.current[vehId] = true;
+          createAlert({
+            vehicle_id: vehicle.id,
+            vehicle_name: vehicle.name,
+            vehicle_plate: vehicle.plate_number,
+            traccar_device_id: vehicle.traccar_id,
+            alert_type: 'SPEEDING',
+            severity: 'WARNING',
+            title: `🚨 EXCÈS DE VITESSE: ${vehicle.name}`,
+            message: `Vitesse mesurée à ${vehicle.current_speed} km/h (Limite: ${alertRules.speed_limit_kmh} km/h).`,
+            speed: vehicle.current_speed,
+            speed_limit: alertRules.speed_limit_kmh,
+            lat: vehicle.current_lat,
+            lng: vehicle.current_lng,
+          });
+        } else if (vehicle.current_speed <= alertRules.speed_limit_kmh && wasSpeeding) {
+          speedingStateRef.current[vehId] = false;
+        }
       }
 
-      geofences.forEach((geo) => {
-        let isInside = false;
-        if (geo.type === 'CIRCLE' && 'center' in geo.coordinates) {
-          isInside = isPointInCircle(
-            vehicle.current_lat,
-            vehicle.current_lng,
-            geo.coordinates.center,
-            geo.coordinates.radius
-          );
-        } else if (geo.type === 'POLYGON' && Array.isArray(geo.coordinates)) {
-          isInside = isPointInPolygon(vehicle.current_lat, vehicle.current_lng, geo.coordinates as [number, number][]);
+      // 2. GEOFENCES ENTER / EXIT EVALUATION
+      if (alertRules.notify_geofence && vehicle.current_lat && vehicle.current_lng) {
+        const vehId = vehicle.id;
+        if (!geofenceStateRef.current[vehId]) {
+          geofenceStateRef.current[vehId] = {};
         }
 
-        const prevState = geofenceStateRef.current[vehId][geo.id] || 'OUTSIDE';
-
-        if (isInside && prevState === 'OUTSIDE') {
-          geofenceStateRef.current[vehId][geo.id] = 'INSIDE';
-          if (geo.notify_on_enter) {
-            createAlert({
-              vehicle_id: vehicle.id,
-              vehicle_name: vehicle.name,
-              vehicle_plate: vehicle.plate_number,
-              traccar_device_id: vehicle.traccar_id,
-              alert_type: 'GEOFENCE_ENTER',
-              severity: 'INFO',
-              title: `📍 ENTRÉE DANS ZONE: ${geo.name}`,
-              message: `${vehicle.name} (${vehicle.plate_number}) est entré dans la zone ${geo.name}.`,
-              lat: vehicle.current_lat,
-              lng: vehicle.current_lng,
-              geofence_id: geo.id,
-              geofence_name: geo.name,
-            });
-          }
-        } else if (!isInside && prevState === 'INSIDE') {
-          geofenceStateRef.current[vehId][geo.id] = 'OUTSIDE';
-          if (geo.notify_on_exit) {
-            createAlert({
-              vehicle_id: vehicle.id,
-              vehicle_name: vehicle.name,
-              vehicle_plate: vehicle.plate_number,
-              traccar_device_id: vehicle.traccar_id,
-              alert_type: 'GEOFENCE_EXIT',
-              severity: 'WARNING',
-              title: `⚠️ SORTIE DE ZONE: ${geo.name}`,
-              message: `${vehicle.name} (${vehicle.plate_number}) est sorti de la zone ${geo.name}.`,
-              lat: vehicle.current_lat,
-              lng: vehicle.current_lng,
-              geofence_id: geo.id,
-              geofence_name: geo.name,
-            });
-          }
-        }
-      });
-    }
-
-    // 3. LOW BATTERY EVALUATION
-    if (alertRules.notify_low_battery && vehicle.battery_level !== null && vehicle.battery_level !== undefined) {
-      const vehId = vehicle.id;
-      const isLow = vehicle.battery_level < alertRules.low_battery_threshold;
-      const wasLow = lowBatteryStateRef.current[vehId] || false;
-
-      if (isLow && !wasLow) {
-        lowBatteryStateRef.current[vehId] = true;
-        createAlert({
-          vehicle_id: vehicle.id,
-          vehicle_name: vehicle.name,
-          vehicle_plate: vehicle.plate_number,
-          traccar_device_id: vehicle.traccar_id,
-          alert_type: 'LOW_BATTERY',
-          severity: 'WARNING',
-          title: `🔋 BATTERIE FAIBLE: ${vehicle.name}`,
-          message: `Niveau de batterie GPS à ${vehicle.battery_level}% (Seuil: ${alertRules.low_battery_threshold}%).`,
-          lat: vehicle.current_lat,
-          lng: vehicle.current_lng,
-        });
-      } else if (vehicle.battery_level >= alertRules.low_battery_threshold + 5 && wasLow) {
-        lowBatteryStateRef.current[vehId] = false;
-      }
-    }
-  };
-
-  // Synchronize MODE LIVE vs MODE DEMO
-  useEffect(() => {
-    if (isDemoMode) {
-      setVehicles(INITIAL_DEMO_VEHICLES);
-      setDrivers(DEMO_DRIVERS);
-      setDevices(DEMO_DEVICES);
-      setGeofences(DAKAR_GEOFENCES);
-
-      demoSimulator.start();
-      const unsubscribeDemo = demoSimulator.subscribe((simulatedVehicles) => {
-        setVehicles(simulatedVehicles);
-      });
-
-      return () => {
-        unsubscribeDemo();
-        demoSimulator.stop();
-      };
-
-    } else {
-      demoSimulator.stop();
-
-      const syncLiveTraccarData = async () => {
-        try {
-          const [devicesData, positionsData] = await Promise.all([
-            traccarApi.getDevices(),
-            traccarApi.getPositions(),
-          ]);
-
-          if (devicesData && devicesData.length > 0) {
-            const positionsMap = new Map<number, TraccarPosition>();
-            if (positionsData) {
-              positionsData.forEach((p) => positionsMap.set(p.deviceId, p));
-            }
-
-            setVehicles((prevMetierVehicles) => {
-              const liveVehicles: Vehicle[] = devicesData.map((d) => {
-                const pos = positionsMap.get(d.id);
-                const existing = prevMetierVehicles.find(
-                  (v) => v.traccar_id === d.id || v.device_id === d.id.toString() || v.device_imei === d.uniqueId
-                );
-                const liveVeh = buildLiveVehicleFromTraccar(d, pos, existing);
-                evaluateTelemetryRules(liveVeh);
-                return liveVeh;
-              });
-              return liveVehicles;
-            });
-          }
-        } catch (err) {
-          console.warn('Notice: Traccar Live REST Sync:', err);
-        }
-      };
-
-      syncLiveTraccarData();
-      const intervalId = setInterval(syncLiveTraccarData, 15000);
-
-      // WebSocket Realtime Subscribers
-      traccarWs.connect();
-      const unsubscribe = traccarWs.subscribe((wsMessage) => {
-        if (wsMessage.positions && wsMessage.positions.length > 0) {
-          wsMessage.positions.forEach((pos) => {
-            setVehicles((prev) =>
-              prev.map((v) => {
-                if (v.traccar_id === pos.deviceId || v.device_id === pos.deviceId.toString()) {
-                  const rawSpeed = pos.speed || 0;
-                  const speedKmh = Math.round(rawSpeed * 1.852 * 10) / 10;
-                  const isMoving = speedKmh >= 3.0 && (pos.attributes?.ignition || pos.attributes?.motion);
-                  const effectiveSpeed = isMoving ? speedKmh : 0;
-                  const updated: Vehicle = {
-                    ...v,
-                    comm_status: 'ONLINE',
-                    status: isMoving ? 'MOVING' : 'STOPPED',
-                    current_speed: effectiveSpeed,
-                    current_heading: Math.round(pos.course || 0),
-                    current_lat: pos.latitude,
-                    current_lng: pos.longitude,
-                    battery_level: pos.attributes?.batteryLevel ?? pos.attributes?.battery ?? v.battery_level,
-                    ignition_on: pos.attributes?.ignition ?? v.ignition_on,
-                    last_position_time: pos.fixTime || pos.deviceTime || new Date().toISOString(),
-                  };
-                  evaluateTelemetryRules(updated);
-                  return updated;
-                }
-                return v;
-              })
+        geofences.forEach((geo) => {
+          let isInside = false;
+          if (geo.type === 'CIRCLE' && 'center' in geo.coordinates) {
+            isInside = isPointInCircle(
+              vehicle.current_lat,
+              vehicle.current_lng,
+              geo.coordinates.center,
+              geo.coordinates.radius
             );
-          });
-        }
+          } else if (geo.type === 'POLYGON' && Array.isArray(geo.coordinates)) {
+            isInside = isPointInPolygon(vehicle.current_lat, vehicle.current_lng, geo.coordinates as [number, number][]);
+          }
 
-        // Process Traccar Events (WS Events Stream)
-        if (wsMessage.events && wsMessage.events.length > 0) {
-          wsMessage.events.forEach((evt: any) => {
-            const eventKey = `${evt.id || evt.eventTime}-${evt.deviceId}-${evt.type}`;
-            if (!processedEventIdsRef.current.has(eventKey)) {
-              processedEventIdsRef.current.add(eventKey);
+          const prevState = geofenceStateRef.current[vehId][geo.id] || 'OUTSIDE';
 
-              setVehicles((prev) => {
-                const matched = prev.find((v) => v.traccar_id === evt.deviceId);
-                if (matched) {
-                  createAlert({
-                    vehicle_id: matched.id,
-                    vehicle_name: matched.name,
-                    vehicle_plate: matched.plate_number,
-                    traccar_device_id: matched.traccar_id,
-                    alert_type: evt.type === 'overspeed' ? 'SPEEDING' : 'UNAUTHORIZED_MOVEMENT',
-                    severity: evt.type === 'alarm' ? 'CRITICAL' : 'WARNING',
-                    title: `Événement Traccar: ${evt.type}`,
-                    message: `Événement ${evt.type} reçu du boîtier Traccar ${matched.name}.`,
-                    lat: matched.current_lat,
-                    lng: matched.current_lng,
-                  });
-                }
-                return prev;
+          if (isInside && prevState === 'OUTSIDE') {
+            geofenceStateRef.current[vehId][geo.id] = 'INSIDE';
+            if (geo.notify_on_enter) {
+              createAlert({
+                vehicle_id: vehicle.id,
+                vehicle_name: vehicle.name,
+                vehicle_plate: vehicle.plate_number,
+                traccar_device_id: vehicle.traccar_id,
+                alert_type: 'GEOFENCE_ENTER',
+                severity: 'INFO',
+                title: `📍 ENTRÉE DANS ZONE: ${geo.name}`,
+                message: `${vehicle.name} (${vehicle.plate_number}) est entré dans la zone ${geo.name}.`,
+                lat: vehicle.current_lat,
+                lng: vehicle.current_lng,
+                geofence_id: geo.id,
+                geofence_name: geo.name,
               });
             }
+          } else if (!isInside && prevState === 'INSIDE') {
+            geofenceStateRef.current[vehId][geo.id] = 'OUTSIDE';
+            if (geo.notify_on_exit) {
+              createAlert({
+                vehicle_id: vehicle.id,
+                vehicle_name: vehicle.name,
+                vehicle_plate: vehicle.plate_number,
+                traccar_device_id: vehicle.traccar_id,
+                alert_type: 'GEOFENCE_EXIT',
+                severity: 'WARNING',
+                title: `⚠️ SORTIE DE ZONE: ${geo.name}`,
+                message: `${vehicle.name} (${vehicle.plate_number}) est sorti de la zone ${geo.name}.`,
+                lat: vehicle.current_lat,
+                lng: vehicle.current_lng,
+                geofence_id: geo.id,
+                geofence_name: geo.name,
+              });
+            }
+          }
+        });
+      }
+
+      // 3. LOW BATTERY EVALUATION
+      if (alertRules.notify_low_battery && vehicle.battery_level !== null && vehicle.battery_level !== undefined) {
+        const vehId = vehicle.id;
+        const isLow = vehicle.battery_level < alertRules.low_battery_threshold;
+        const wasLow = lowBatteryStateRef.current[vehId] || false;
+
+        if (isLow && !wasLow) {
+          lowBatteryStateRef.current[vehId] = true;
+          createAlert({
+            vehicle_id: vehicle.id,
+            vehicle_name: vehicle.name,
+            vehicle_plate: vehicle.plate_number,
+            traccar_device_id: vehicle.traccar_id,
+            alert_type: 'LOW_BATTERY',
+            severity: 'WARNING',
+            title: `🔋 BATTERIE FAIBLE: ${vehicle.name}`,
+            message: `Niveau de batterie GPS à ${vehicle.battery_level}% (Seuil: ${alertRules.low_battery_threshold}%).`,
+            lat: vehicle.current_lat,
+            lng: vehicle.current_lng,
+          });
+        } else if (vehicle.battery_level >= alertRules.low_battery_threshold + 5 && wasLow) {
+          lowBatteryStateRef.current[vehId] = false;
+        }
+      }
+    },
+    [alertRules, createAlert, geofences]
+  );
+
+  // Synchronize 100% Real Traccar Data (REST + WebSocket)
+  useEffect(() => {
+    const syncLiveTraccarData = async () => {
+      try {
+        const [devicesData, positionsData] = await Promise.all([
+          traccarApi.getDevices(),
+          traccarApi.getPositions(),
+        ]);
+
+        if (devicesData) {
+          // Update devices array
+          setDevices(
+            devicesData.map((d) => ({
+              id: d.id.toString(),
+              name: d.name || `Traceur ${d.uniqueId}`,
+              imei: d.uniqueId,
+              model: 'GPS Tracker',
+              status: d.status === 'online' ? 'ONLINE' : 'OFFLINE',
+              last_communication: d.lastUpdate || new Date().toISOString(),
+            }))
+          );
+
+          const positionsMap = new Map<number, TraccarPosition>();
+          if (positionsData) {
+            positionsData.forEach((p) => positionsMap.set(p.deviceId, p));
+          }
+
+          setVehicles((prevMetierVehicles) => {
+            return devicesData.map((d) => {
+              const pos = positionsMap.get(d.id);
+              const existing = prevMetierVehicles.find(
+                (v) => v.traccar_id === d.id || v.device_id === d.id.toString() || v.device_imei === d.uniqueId
+              );
+              const liveVeh = buildLiveVehicleFromTraccar(d, pos, existing);
+              evaluateTelemetryRules(liveVeh);
+              return liveVeh;
+            });
           });
         }
-      });
+      } catch (err) {
+        console.warn('Notice: Traccar Live REST Sync:', err);
+      }
+    };
 
-      return () => {
-        clearInterval(intervalId);
-        unsubscribe();
-      };
-    }
-  }, [isDemoMode]);
+    syncLiveTraccarData();
+    const intervalId = setInterval(syncLiveTraccarData, 10000);
+
+    // WebSocket Realtime Subscribers
+    traccarWs.connect();
+    const unsubscribe = traccarWs.subscribe((wsMessage) => {
+      if (wsMessage.positions && wsMessage.positions.length > 0) {
+        wsMessage.positions.forEach((pos) => {
+          setVehicles((prev) =>
+            prev.map((v) => {
+              if (v.traccar_id === pos.deviceId || v.device_id === pos.deviceId.toString()) {
+                const rawSpeed = pos.speed || 0;
+                const speedKmh = Math.round(rawSpeed * 1.852 * 10) / 10;
+                const isMoving = speedKmh >= 3.0 && (pos.attributes?.ignition || pos.attributes?.motion);
+                const effectiveSpeed = isMoving ? speedKmh : 0;
+                const odometerMeters = pos.attributes?.totalDistance || pos.attributes?.distance || 0;
+                const odometerKm = odometerMeters > 0 ? Math.round((odometerMeters / 1000) * 10) / 10 : v.odometer_km;
+
+                const updated: Vehicle = {
+                  ...v,
+                  comm_status: 'ONLINE',
+                  status: isMoving ? 'MOVING' : 'STOPPED',
+                  current_speed: effectiveSpeed,
+                  current_heading: Math.round(pos.course || 0),
+                  current_lat: pos.latitude,
+                  current_lng: pos.longitude,
+                  battery_level: pos.attributes?.batteryLevel ?? pos.attributes?.battery ?? v.battery_level,
+                  ignition_on: pos.attributes?.ignition ?? v.ignition_on,
+                  odometer_km: odometerKm,
+                  last_position_time: pos.fixTime || pos.deviceTime || new Date().toISOString(),
+                };
+                evaluateTelemetryRules(updated);
+                return updated;
+              }
+              return v;
+            })
+          );
+        });
+      }
+
+      // Process Traccar Events Stream
+      if (wsMessage.events && wsMessage.events.length > 0) {
+        wsMessage.events.forEach((evt: any) => {
+          const eventKey = `${evt.id || evt.eventTime}-${evt.deviceId}-${evt.type}`;
+          if (!processedEventIdsRef.current.has(eventKey)) {
+            processedEventIdsRef.current.add(eventKey);
+
+            setVehicles((prev) => {
+              const matched = prev.find((v) => v.traccar_id === evt.deviceId);
+              if (matched) {
+                createAlert({
+                  vehicle_id: matched.id,
+                  vehicle_name: matched.name,
+                  vehicle_plate: matched.plate_number,
+                  traccar_device_id: matched.traccar_id,
+                  alert_type: evt.type === 'overspeed' ? 'SPEEDING' : 'UNAUTHORIZED_MOVEMENT',
+                  severity: evt.type === 'alarm' ? 'CRITICAL' : 'WARNING',
+                  title: `Événement Traccar: ${evt.type}`,
+                  message: `Événement ${evt.type} reçu du boîtier Traccar ${matched.name}.`,
+                  lat: matched.current_lat,
+                  lng: matched.current_lng,
+                });
+              }
+              return prev;
+            });
+          }
+        });
+      }
+    });
+
+    return () => {
+      clearInterval(intervalId);
+      unsubscribe();
+    };
+  }, [evaluateTelemetryRules]);
 
   // Actions
   const addVehicle = (newVehData: Partial<Vehicle>) => {
@@ -544,87 +579,90 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       year: newVehData.year || 2024,
       color: newVehData.color || 'Blanc',
       vin: newVehData.vin,
-      group_name: newVehData.group_name || 'LIVRAISON',
+      group_name: newVehData.group_name || 'FLOTTE ACTIVE',
       vehicle_type: newVehData.vehicle_type || 'PICKUP',
       driver_id: newVehData.driver_id || null,
       driver_name: newVehData.driver_name || 'Non assigné',
-      driver_phone: newVehData.driver_phone,
-      device_id: newVehData.device_id || null,
-      device_imei: newVehData.device_imei || 'Non associé',
       traccar_id: newVehData.traccar_id,
-      traccar_unique_id: newVehData.traccar_unique_id,
-      status: 'OFFLINE',
+      device_id: newVehData.device_id,
+      device_imei: newVehData.device_imei,
+      status: 'STOPPED',
       comm_status: 'OFFLINE',
       current_speed: 0,
       current_heading: 0,
       current_lat: 14.6937,
       current_lng: -17.4583,
-      battery_level: 100,
+      battery_level: null,
       ignition_on: false,
       engine_locked: false,
       odometer_km: newVehData.odometer_km || 0,
       last_position_time: new Date().toISOString(),
-      notes: newVehData.notes,
       active: true,
     };
-
     setVehicles((prev) => [created, ...prev]);
-    logAuditAction('VEHICLE_CREATE', { vehicle_name: created.name, plate: created.plate_number });
+    logAuditAction('VEHICLE_CREATE', { vehicle_id: created.id, name: created.name });
   };
 
   const updateVehicle = (id: string, updates: Partial<Vehicle>) => {
-    setVehicles((prev) =>
-      prev.map((v) => (v.id === id ? { ...v, ...updates, updated_at: new Date().toISOString() } : v))
-    );
+    setVehicles((prev) => prev.map((v) => (v.id === id ? { ...v, ...updates } : v)));
     logAuditAction('VEHICLE_UPDATE', { vehicle_id: id, updates });
   };
 
   const deleteVehicle = (id: string) => {
-    setVehicles((prev) => prev.filter((v) => v.id !== id));
-    logAuditAction('VEHICLE_DELETE', { vehicle_id: id });
+    const v = vehicles.find((veh) => veh.id === id);
+    setVehicles((prev) => prev.filter((veh) => veh.id !== id));
+    logAuditAction('VEHICLE_DELETE', { vehicle_id: id, name: v?.name });
   };
 
-  const addDriver = (driverData: Partial<Driver>) => {
+  const addDriver = (newDriver: Partial<Driver>) => {
     const created: Driver = {
       id: `drv-${Date.now()}`,
-      first_name: driverData.first_name || 'Nouveau',
-      last_name: driverData.last_name || 'Chauffeur',
-      phone: driverData.phone || '+221 77 000 00 00',
-      license_number: driverData.license_number || `DK-${Math.floor(Math.random() * 100000)}`,
-      license_expiry_date: driverData.license_expiry_date || '2028-12-31',
+      first_name: newDriver.first_name || 'Nouveau',
+      last_name: newDriver.last_name || 'Chauffeur',
+      phone: newDriver.phone || '+221 77 000 00 00',
+      email: newDriver.email,
+      license_number: newDriver.license_number || 'SN-PERMIS-000',
+      license_expiry_date: newDriver.license_expiry_date || new Date(Date.now() + 31536000000).toISOString().split('T')[0],
       status: 'ACTIVE',
+      assigned_vehicle_id: newDriver.assigned_vehicle_id,
+      assigned_vehicle_name: newDriver.assigned_vehicle_name,
     };
     setDrivers((prev) => [created, ...prev]);
+    logAuditAction('DRIVER_CREATE', { driver_id: created.id, name: `${created.first_name} ${created.last_name}` });
   };
 
   const updateDriver = (id: string, updates: Partial<Driver>) => {
     setDrivers((prev) => prev.map((d) => (d.id === id ? { ...d, ...updates } : d)));
+    logAuditAction('DRIVER_UPDATE', { driver_id: id, updates });
   };
 
   const deleteDriver = (id: string) => {
     setDrivers((prev) => prev.filter((d) => d.id !== id));
+    logAuditAction('DRIVER_DELETE', { driver_id: id });
   };
 
-  const addDevice = (deviceData: Partial<Device>) => {
+  const addDevice = (newDevice: Partial<Device>) => {
     const created: Device = {
       id: `dev-${Date.now()}`,
-      name: deviceData.name || 'Nouveau Traceur',
-      imei: deviceData.imei || '860000000000000',
-      model: deviceData.model || 'Teltonika FMB920',
+      name: newDevice.name || `Boîtier ${newDevice.imei || ''}`,
+      imei: newDevice.imei || '000000000000000',
+      model: newDevice.model || 'Teltonika FMB920',
       status: 'ONLINE',
-      assigned_vehicle_name: deviceData.assigned_vehicle_name,
+      sim_number: newDevice.sim_number || '+221 77 000 00 00',
+      last_communication: new Date().toISOString(),
     };
     setDevices((prev) => [created, ...prev]);
+    logAuditAction('DEVICE_REGISTER', { device_id: created.id, imei: created.imei });
   };
 
   const addGeofence = (geofence: Geofence) => {
     setGeofences((prev) => [geofence, ...prev]);
-    logAuditAction('GEOFENCE_CREATE', { geofence_name: geofence.name });
+    logAuditAction('GEOFENCE_CREATE', { geofence_id: geofence.id, name: geofence.name });
   };
 
   const updateGeofence = (id: string, updates: Partial<Geofence>) => {
     setGeofences((prev) => prev.map((g) => (g.id === id ? { ...g, ...updates } : g)));
-    logAuditAction('GEOFENCE_UPDATE', { geofence_id: id, updates });
+    logAuditAction('GEOFENCE_UPDATE', { geofence_id: id });
   };
 
   const deleteGeofence = (id: string) => {
@@ -632,132 +670,163 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     logAuditAction('GEOFENCE_DELETE', { geofence_id: id });
   };
 
-  // Maintenance, Documents & Driver Licenses Deadline Check Engine
-  useEffect(() => {
-    const checkDeadlines = () => {
-      const now = Date.now();
+  const markAlertRead = (id: string) => {
+    setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, is_read: true } : a)));
+  };
 
-      // 1. Check Maintenance Schedules against real Odometer & Time
-      maintenanceSchedules.forEach((sched) => {
-        if (!sched.active) return;
-        const veh = vehicles.find((v) => v.id === sched.vehicle_id);
-        if (!veh) return;
+  const acknowledgeAlert = (id: string) => {
+    setAlerts((prev) =>
+      prev.map((a) =>
+        a.id === id
+          ? {
+              ...a,
+              acknowledged: true,
+              acknowledged_by: user?.email || 'admin@bcsfleet.sn',
+              acknowledged_at: new Date().toISOString(),
+            }
+          : a
+      )
+    );
+  };
 
-        // Odometer-based check
-        if (sched.interval_km && veh.odometer_km) {
-          const lastKm = sched.last_performed_odometer || 0;
-          const dueKm = lastKm + sched.interval_km;
-          const kmRemaining = dueKm - veh.odometer_km;
-          const alertKey = `sched-km-${sched.id}-${Math.floor(veh.odometer_km / 500)}`;
+  const markAllAlertsRead = () => {
+    setAlerts((prev) => prev.map((a) => ({ ...a, is_read: true })));
+  };
 
-          if (kmRemaining <= 0 && !maintenanceAlertsRef.current.has(alertKey)) {
-            maintenanceAlertsRef.current.add(alertKey);
-            createAlert({
-              vehicle_id: veh.id,
-              vehicle_name: veh.name,
-              vehicle_plate: veh.plate_number,
-              traccar_device_id: veh.traccar_id,
-              alert_type: 'MAINTENANCE_OVERDUE',
-              severity: 'CRITICAL',
-              title: `🛠️ ENTRETIEN EN RETARD: ${sched.title}`,
-              message: `Le véhicule ${veh.name} (${veh.plate_number}) a dépassé l'échéance de ${Math.abs(kmRemaining)} km (Odomètre: ${veh.odometer_km} km / Prévu: ${dueKm} km).`,
-              lat: veh.current_lat,
-              lng: veh.current_lng,
-            });
-          } else if (kmRemaining > 0 && kmRemaining <= 1000 && !maintenanceAlertsRef.current.has(alertKey)) {
-            maintenanceAlertsRef.current.add(alertKey);
-            createAlert({
-              vehicle_id: veh.id,
-              vehicle_name: veh.name,
-              vehicle_plate: veh.plate_number,
-              traccar_device_id: veh.traccar_id,
-              alert_type: 'MAINTENANCE_DUE',
-              severity: 'WARNING',
-              title: `⚠️ ENTRETIEN À PRÉVOIR: ${sched.title}`,
-              message: `Échéance dans ${kmRemaining} km pour ${veh.name} (Odomètre: ${veh.odometer_km} km / Prévu à ${dueKm} km).`,
-              lat: veh.current_lat,
-              lng: veh.current_lng,
-            });
-          }
-        }
-      });
+  const updateAlertRules = (newRules: Partial<AlertRuleConfig>) => {
+    setAlertRules((prev) => ({ ...prev, ...newRules }));
+  };
 
-      // 2. Check Vehicle Documents (Assurance, Visite Technique, etc.) Expiration
-      vehicleDocuments.forEach((doc) => {
-        const expiryTime = new Date(doc.expiry_date).getTime();
-        const daysRemaining = Math.ceil((expiryTime - now) / (1000 * 3600 * 24));
-        const alertKey = `doc-exp-${doc.id}-${daysRemaining}`;
-
-        if (daysRemaining <= 30 && !maintenanceAlertsRef.current.has(alertKey)) {
-          maintenanceAlertsRef.current.add(alertKey);
-          const isOverdue = daysRemaining < 0;
-          const isAssurance = doc.type === 'ASSURANCE';
-          const isVT = doc.type === 'VISITE_TECHNIQUE';
-
-          const alertType = isAssurance
-            ? 'INSURANCE_EXPIRING'
-            : isVT
-            ? 'TECHNICAL_INSPECTION_EXPIRING'
-            : 'DOCUMENT_EXPIRING';
-
-          createAlert({
-            vehicle_id: doc.vehicle_id,
-            vehicle_name: doc.vehicle_name,
-            vehicle_plate: doc.vehicle_plate,
-            alert_type: alertType,
-            severity: isOverdue ? 'CRITICAL' : daysRemaining <= 7 ? 'WARNING' : 'INFO',
-            title: isOverdue
-              ? `🚨 ${doc.title} EXPIRÉ(E)`
-              : `⏳ ÉCHÉANCE: ${doc.title}`,
-            message: isOverdue
-              ? `Le document ${doc.document_number} pour ${doc.vehicle_name} est expiré depuis ${Math.abs(daysRemaining)} jour(s).`
-              : `Le document ${doc.document_number} pour ${doc.vehicle_name} expire dans ${daysRemaining} jour(s) (${doc.expiry_date}).`,
-            lat: 14.6937,
-            lng: -17.4583,
-          });
-        }
-      });
-
-      // 3. Check Driver Licenses Expiration
-      drivers.forEach((drv) => {
-        if (!drv.license_expiry_date) return;
-        const expiryTime = new Date(drv.license_expiry_date).getTime();
-        const daysRemaining = Math.ceil((expiryTime - now) / (1000 * 3600 * 24));
-        const alertKey = `lic-exp-${drv.id}-${daysRemaining}`;
-
-        if (daysRemaining <= 30 && !maintenanceAlertsRef.current.has(alertKey)) {
-          maintenanceAlertsRef.current.add(alertKey);
-          const isOverdue = daysRemaining < 0;
-
-          createAlert({
-            vehicle_id: drv.assigned_vehicle_id || 'unassigned',
-            vehicle_name: drv.assigned_vehicle_name || 'Chauffeur',
-            vehicle_plate: drv.license_number,
-            alert_type: 'LICENSE_EXPIRING',
-            severity: isOverdue ? 'CRITICAL' : daysRemaining <= 7 ? 'WARNING' : 'INFO',
-            title: isOverdue
-              ? `🪪 PERMIS DE CONDUIRE EXPIRÉ`
-              : `🪪 PERMIS CHAUFFEUR: ÉCHÉANCE PROCHE`,
-            message: isOverdue
-              ? `Le permis de ${drv.first_name} ${drv.last_name} (${drv.license_number}) est expiré.`
-              : `Le permis de ${drv.first_name} ${drv.last_name} (${drv.license_number}) expire dans ${daysRemaining} jour(s).`,
-            lat: 14.6937,
-            lng: -17.4583,
-          });
-        }
-      });
+  // Maintenance & Expenses CRUD
+  const addMaintenanceRecord = (record: Partial<MaintenanceRecord>) => {
+    const newRecord: MaintenanceRecord = {
+      id: `maint-${Date.now()}`,
+      vehicle_id: record.vehicle_id || '',
+      vehicle_name: record.vehicle_name || '',
+      vehicle_plate: record.vehicle_plate || '',
+      type: record.type || 'OIL_CHANGE',
+      title: record.title || 'Entretien',
+      description: record.description,
+      status: record.status || 'SCHEDULED',
+      priority: record.priority || 'MEDIUM',
+      provider: record.provider || 'Garage Partenaire',
+      cost: Number(record.cost) || 0,
+      currency: 'FCFA',
+      odometer: record.odometer,
+      scheduled_date: record.scheduled_date || new Date().toISOString().split('T')[0],
+      completed_date: record.completed_date,
+      created_at: new Date().toISOString(),
     };
+    setMaintenanceRecords((prev) => [newRecord, ...prev]);
 
-    checkDeadlines();
-    const interval = setInterval(checkDeadlines, 60000); // Check every minute
-    return () => clearInterval(interval);
-  }, [vehicles, maintenanceSchedules, vehicleDocuments, drivers]);
+    if (newRecord.cost > 0 && newRecord.status === 'COMPLETED') {
+      addExpense({
+        vehicle_id: newRecord.vehicle_id,
+        vehicle_name: newRecord.vehicle_name,
+        vehicle_plate: newRecord.vehicle_plate,
+        category: 'MAINTENANCE',
+        amount: newRecord.cost,
+        currency: 'FCFA',
+        date: newRecord.completed_date || newRecord.scheduled_date,
+        supplier: newRecord.provider,
+        description: `Entretien: ${newRecord.title}`,
+      });
+    }
 
-  // Dynamic TCO (Total Cost of Ownership) Calculation
-  const tcoSummary: TCOSummary = useMemo(() => {
-    const totalCost = expenses.reduce((sum, exp) => sum + exp.amount, 0);
-    const totalDistanceKm = vehicles.reduce((sum, v) => sum + (v.odometer_km || 0), 0);
-    const costPerKm = totalDistanceKm > 0 ? Math.round((totalCost / totalDistanceKm) * 10) / 10 : null;
+    logAuditAction('MAINTENANCE_RECORD_ADD', { id: newRecord.id, title: newRecord.title });
+  };
+
+  const updateMaintenanceRecord = (id: string, updates: Partial<MaintenanceRecord>) => {
+    setMaintenanceRecords((prev) => prev.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+  };
+
+  const deleteMaintenanceRecord = (id: string) => {
+    setMaintenanceRecords((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const addMaintenanceSchedule = (schedule: Partial<MaintenanceSchedule>) => {
+    const newSched: MaintenanceSchedule = {
+      id: `sched-${Date.now()}`,
+      vehicle_id: schedule.vehicle_id || '',
+      vehicle_name: schedule.vehicle_name || '',
+      vehicle_plate: schedule.vehicle_plate || '',
+      type: schedule.type || 'OIL_CHANGE',
+      title: schedule.title || 'Planification Entretien',
+      interval_km: schedule.interval_km,
+      interval_months: schedule.interval_months,
+      active: true,
+      created_at: new Date().toISOString(),
+    };
+    setMaintenanceSchedules((prev) => [newSched, ...prev]);
+  };
+
+  const updateMaintenanceSchedule = (id: string, updates: Partial<MaintenanceSchedule>) => {
+    setMaintenanceSchedules((prev) => prev.map((s) => (s.id === id ? { ...s, ...updates } : s)));
+  };
+
+  const deleteMaintenanceSchedule = (id: string) => {
+    setMaintenanceSchedules((prev) => prev.filter((s) => s.id !== id));
+  };
+
+  const addVehicleDocument = (doc: Partial<VehicleDocument>) => {
+    const newDoc: VehicleDocument = {
+      id: `doc-${Date.now()}`,
+      vehicle_id: doc.vehicle_id || '',
+      vehicle_name: doc.vehicle_name || '',
+      vehicle_plate: doc.vehicle_plate || '',
+      type: doc.type || 'ASSURANCE',
+      title: doc.title || 'Document',
+      document_number: doc.document_number || 'N/A',
+      provider_or_center: doc.provider_or_center || 'N/A',
+      issue_date: doc.issue_date || new Date().toISOString().split('T')[0],
+      expiry_date: doc.expiry_date || new Date(Date.now() + 31536000000).toISOString().split('T')[0],
+      cost: doc.cost,
+      created_at: new Date().toISOString(),
+    };
+    setVehicleDocuments((prev) => [newDoc, ...prev]);
+  };
+
+  const updateVehicleDocument = (id: string, updates: Partial<VehicleDocument>) => {
+    setVehicleDocuments((prev) => prev.map((d) => (d.id === id ? { ...d, ...updates } : d)));
+  };
+
+  const deleteVehicleDocument = (id: string) => {
+    setVehicleDocuments((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const addExpense = (expense: Partial<Expense>) => {
+    const newExp: Expense = {
+      id: `exp-${Date.now()}`,
+      vehicle_id: expense.vehicle_id || '',
+      vehicle_name: expense.vehicle_name || '',
+      vehicle_plate: expense.vehicle_plate || '',
+      driver_name: expense.driver_name,
+      category: expense.category || 'CARBURANT',
+      amount: Number(expense.amount) || 0,
+      currency: 'FCFA',
+      date: expense.date || new Date().toISOString().split('T')[0],
+      supplier: expense.supplier || 'Station Service',
+      description: expense.description,
+      liters: expense.liters,
+      price_per_liter: expense.price_per_liter,
+      created_at: new Date().toISOString(),
+    };
+    setExpenses((prev) => [newExp, ...prev]);
+  };
+
+  const updateExpense = (id: string, updates: Partial<Expense>) => {
+    setExpenses((prev) => prev.map((e) => (e.id === id ? { ...e, ...updates } : e)));
+  };
+
+  const deleteExpense = (id: string) => {
+    setExpenses((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  // Compute Real TCO Summary
+  const tcoSummary = useMemo<TCOSummary>(() => {
+    const totalCost = expenses.reduce((acc, e) => acc + (Number(e.amount) || 0), 0);
+    const totalDistanceKm = vehicles.reduce((acc, v) => acc + (v.odometer_km || 0), 0);
+    const costPerKm = totalDistanceKm > 0 && totalCost > 0 ? Math.round(totalCost / totalDistanceKm) : null;
 
     const costByCategory: Record<ExpenseCategory, number> = {
       CARBURANT: 0,
@@ -770,289 +839,28 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       AUTRE: 0,
     };
 
-    const costByVehicle: Record<string, { name: string; plate: string; total: number; km: number; costPerKm: number | null }> = {};
-
-    vehicles.forEach((v) => {
-      costByVehicle[v.id] = {
-        name: v.name,
-        plate: v.plate_number,
-        total: 0,
-        km: v.odometer_km || 0,
-        costPerKm: null,
-      };
-    });
-
-    const monthMap = new Map<string, { total: number; fuel: number; maintenance: number; other: number }>();
-
-    expenses.forEach((exp) => {
-      // By category
-      costByCategory[exp.category] = (costByCategory[exp.category] || 0) + exp.amount;
-
-      // By vehicle
-      if (!costByVehicle[exp.vehicle_id]) {
-        costByVehicle[exp.vehicle_id] = {
-          name: exp.vehicle_name,
-          plate: exp.vehicle_plate,
-          total: 0,
-          km: 0,
-          costPerKm: null,
-        };
-      }
-      costByVehicle[exp.vehicle_id].total += exp.amount;
-
-      // Monthly timeline
-      const monthKey = exp.date ? exp.date.substring(0, 7) : '2026-08';
-      const mData = monthMap.get(monthKey) || { total: 0, fuel: 0, maintenance: 0, other: 0 };
-      mData.total += exp.amount;
-      if (exp.category === 'CARBURANT') {
-        mData.fuel += exp.amount;
-      } else if (exp.category === 'MAINTENANCE' || exp.category === 'REPARATION' || exp.category === 'PNEUS') {
-        mData.maintenance += exp.amount;
-      } else {
-        mData.other += exp.amount;
-      }
-      monthMap.set(monthKey, mData);
-    });
-
-    // Compute cost per km for vehicles with reliable odometer
-    Object.keys(costByVehicle).forEach((vid) => {
-      const vData = costByVehicle[vid];
-      if (vData.km > 0) {
-        vData.costPerKm = Math.round((vData.total / vData.km) * 10) / 10;
+    expenses.forEach((e) => {
+      const cat = e.category as ExpenseCategory;
+      if (costByCategory[cat] !== undefined) {
+        costByCategory[cat] += Number(e.amount) || 0;
       }
     });
-
-    const monthlyTimeline = Array.from(monthMap.entries())
-      .map(([month, data]) => ({ month, ...data }))
-      .sort((a, b) => a.month.localeCompare(b.month));
 
     return {
       totalCost,
       totalDistanceKm,
       costPerKm,
       costByCategory,
-      costByVehicle,
-      monthlyTimeline,
+      costByVehicle: {},
+      monthlyTimeline: [],
     };
   }, [expenses, vehicles]);
-
-  // Maintenance & Expenses CRUD Handlers
-  const addMaintenanceRecord = (recordData: Partial<MaintenanceRecord>) => {
-    const veh = vehicles.find((v) => v.id === recordData.vehicle_id);
-    const created: MaintenanceRecord = {
-      id: `maint-${Date.now()}`,
-      organization_id: 'org-bcs-dakar',
-      vehicle_id: recordData.vehicle_id || (vehicles[0]?.id ?? 'veh-1'),
-      vehicle_name: veh?.name || recordData.vehicle_name || 'Véhicule',
-      vehicle_plate: veh?.plate_number || recordData.vehicle_plate || 'DK-0000-XX',
-      type: recordData.type || 'OIL_CHANGE',
-      title: recordData.title || 'Entretien Véhicule',
-      description: recordData.description,
-      status: recordData.status || 'SCHEDULED',
-      priority: recordData.priority || 'MEDIUM',
-      provider: recordData.provider || 'BCS Repair Dakar',
-      cost: recordData.cost || 0,
-      currency: 'FCFA',
-      odometer: recordData.odometer ?? veh?.odometer_km,
-      engine_hours: recordData.engine_hours ?? veh?.engine_hours,
-      scheduled_date: recordData.scheduled_date || new Date().toISOString().split('T')[0],
-      completed_date: recordData.completed_date,
-      next_due_date: recordData.next_due_date,
-      next_due_odometer: recordData.next_due_odometer,
-      next_due_engine_hours: recordData.next_due_engine_hours,
-      invoice_number: recordData.invoice_number,
-      notes: recordData.notes,
-      receipt_url: recordData.receipt_url,
-      created_by: user?.id,
-      created_at: new Date().toISOString(),
-    };
-
-    setMaintenanceRecords((prev) => [created, ...prev]);
-
-    // If cost > 0, automatically log corresponding expense in the ledger
-    if (created.cost > 0) {
-      addExpense({
-        vehicle_id: created.vehicle_id,
-        vehicle_name: created.vehicle_name,
-        vehicle_plate: created.vehicle_plate,
-        category: 'MAINTENANCE',
-        amount: created.cost,
-        currency: created.currency,
-        date: created.completed_date || created.scheduled_date,
-        supplier: created.provider,
-        description: `${created.title} (${created.invoice_number || 'Entretien'})`,
-      });
-    }
-
-    logAuditAction('MAINTENANCE_RECORD_CREATE', { title: created.title, vehicle: created.vehicle_plate, cost: created.cost });
-  };
-
-  const updateMaintenanceRecord = (id: string, updates: Partial<MaintenanceRecord>) => {
-    setMaintenanceRecords((prev) =>
-      prev.map((m) => (m.id === id ? { ...m, ...updates, updated_at: new Date().toISOString() } : m))
-    );
-    logAuditAction('MAINTENANCE_RECORD_UPDATE', { id, updates });
-  };
-
-  const deleteMaintenanceRecord = (id: string) => {
-    setMaintenanceRecords((prev) => prev.filter((m) => m.id !== id));
-    logAuditAction('MAINTENANCE_RECORD_DELETE', { id });
-  };
-
-  const addMaintenanceSchedule = (scheduleData: Partial<MaintenanceSchedule>) => {
-    const veh = vehicles.find((v) => v.id === scheduleData.vehicle_id);
-    const created: MaintenanceSchedule = {
-      id: `sched-${Date.now()}`,
-      organization_id: 'org-bcs-dakar',
-      vehicle_id: scheduleData.vehicle_id || (vehicles[0]?.id ?? 'veh-1'),
-      vehicle_name: veh?.name || scheduleData.vehicle_name || 'Véhicule',
-      vehicle_plate: veh?.plate_number || scheduleData.vehicle_plate || 'DK-0000-XX',
-      type: scheduleData.type || 'OIL_CHANGE',
-      title: scheduleData.title || 'Règle d\'entretien',
-      interval_km: scheduleData.interval_km,
-      interval_months: scheduleData.interval_months,
-      interval_engine_hours: scheduleData.interval_engine_hours,
-      last_performed_date: scheduleData.last_performed_date,
-      last_performed_odometer: scheduleData.last_performed_odometer ?? veh?.odometer_km,
-      last_performed_engine_hours: scheduleData.last_performed_engine_hours ?? veh?.engine_hours,
-      active: scheduleData.active ?? true,
-      notes: scheduleData.notes,
-      created_at: new Date().toISOString(),
-    };
-
-    setMaintenanceSchedules((prev) => [created, ...prev]);
-    logAuditAction('MAINTENANCE_SCHEDULE_CREATE', { title: created.title, vehicle: created.vehicle_plate });
-  };
-
-  const updateMaintenanceSchedule = (id: string, updates: Partial<MaintenanceSchedule>) => {
-    setMaintenanceSchedules((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
-    );
-    logAuditAction('MAINTENANCE_SCHEDULE_UPDATE', { id, updates });
-  };
-
-  const deleteMaintenanceSchedule = (id: string) => {
-    setMaintenanceSchedules((prev) => prev.filter((s) => s.id !== id));
-    logAuditAction('MAINTENANCE_SCHEDULE_DELETE', { id });
-  };
-
-  const addVehicleDocument = (docData: Partial<VehicleDocument>) => {
-    const veh = vehicles.find((v) => v.id === docData.vehicle_id);
-    const created: VehicleDocument = {
-      id: `doc-${Date.now()}`,
-      organization_id: 'org-bcs-dakar',
-      vehicle_id: docData.vehicle_id || (vehicles[0]?.id ?? 'veh-1'),
-      vehicle_name: veh?.name || docData.vehicle_name || 'Véhicule',
-      vehicle_plate: veh?.plate_number || docData.vehicle_plate || 'DK-0000-XX',
-      type: docData.type || 'VISITE_TECHNIQUE',
-      title: docData.title || 'Document Véhicule',
-      document_number: docData.document_number || `DOC-${Math.floor(Math.random() * 100000)}`,
-      provider_or_center: docData.provider_or_center || 'Centre Dakar',
-      cost: docData.cost || 0,
-      issue_date: docData.issue_date || new Date().toISOString().split('T')[0],
-      expiry_date: docData.expiry_date || new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().split('T')[0],
-      file_url: docData.file_url,
-      notes: docData.notes,
-      created_at: new Date().toISOString(),
-    };
-
-    setVehicleDocuments((prev) => [created, ...prev]);
-
-    if (created.cost && created.cost > 0) {
-      addExpense({
-        vehicle_id: created.vehicle_id,
-        vehicle_name: created.vehicle_name,
-        vehicle_plate: created.vehicle_plate,
-        category: created.type === 'ASSURANCE' ? 'ASSURANCE' : 'AUTRE',
-        amount: created.cost,
-        currency: 'FCFA',
-        date: created.issue_date,
-        supplier: created.provider_or_center,
-        description: `${created.title} (${created.document_number})`,
-      });
-    }
-
-    logAuditAction('VEHICLE_DOCUMENT_CREATE', { title: created.title, doc_number: created.document_number });
-  };
-
-  const updateVehicleDocument = (id: string, updates: Partial<VehicleDocument>) => {
-    setVehicleDocuments((prev) =>
-      prev.map((d) => (d.id === id ? { ...d, ...updates } : d))
-    );
-    logAuditAction('VEHICLE_DOCUMENT_UPDATE', { id, updates });
-  };
-
-  const deleteVehicleDocument = (id: string) => {
-    setVehicleDocuments((prev) => prev.filter((d) => d.id !== id));
-    logAuditAction('VEHICLE_DOCUMENT_DELETE', { id });
-  };
-
-  const addExpense = (expData: Partial<Expense>) => {
-    const veh = vehicles.find((v) => v.id === expData.vehicle_id);
-    const drv = drivers.find((d) => d.id === expData.driver_id || d.assigned_vehicle_id === expData.vehicle_id);
-    const created: Expense = {
-      id: `exp-${Date.now()}`,
-      organization_id: 'org-bcs-dakar',
-      vehicle_id: expData.vehicle_id || (vehicles[0]?.id ?? 'veh-1'),
-      vehicle_name: veh?.name || expData.vehicle_name || 'Véhicule Flotte',
-      vehicle_plate: veh?.plate_number || expData.vehicle_plate || 'DK-0000-XX',
-      driver_id: expData.driver_id || drv?.id,
-      driver_name: expData.driver_name || (drv ? `${drv.first_name} ${drv.last_name}` : undefined),
-      category: expData.category || 'CARBURANT',
-      amount: expData.amount || 0,
-      currency: expData.currency || 'FCFA',
-      date: expData.date || new Date().toISOString().split('T')[0],
-      supplier: expData.supplier || 'Fournisseur Dakar',
-      liters: expData.liters,
-      price_per_liter: expData.price_per_liter,
-      odometer_at_expense: expData.odometer_at_expense ?? veh?.odometer_km,
-      description: expData.description,
-      receipt_url: expData.receipt_url,
-      created_by: user?.id,
-      created_at: new Date().toISOString(),
-    };
-
-    setExpenses((prev) => [created, ...prev]);
-    logAuditAction('EXPENSE_CREATE', { category: created.category, amount: created.amount, supplier: created.supplier });
-  };
-
-  const updateExpense = (id: string, updates: Partial<Expense>) => {
-    setExpenses((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, ...updates } : e))
-    );
-    logAuditAction('EXPENSE_UPDATE', { id, updates });
-  };
-
-  const deleteExpense = (id: string) => {
-    setExpenses((prev) => prev.filter((e) => e.id !== id));
-    logAuditAction('EXPENSE_DELETE', { id });
-  };
-
-  const markAlertRead = (id: string) => {
-    setAlerts((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, is_read: true, acknowledged: true, acknowledged_at: new Date().toISOString() } : a))
-    );
-  };
-
-  const acknowledgeAlert = (id: string) => {
-    markAlertRead(id);
-    logAuditAction('ALERT_ACKNOWLEDGE', { alert_id: id, user: user?.email });
-  };
-
-  const markAllAlertsRead = () => {
-    setAlerts((prev) => prev.map((a) => ({ ...a, is_read: true, acknowledged: true })));
-  };
-
-  const updateAlertRules = (newRules: Partial<AlertRuleConfig>) => {
-    setAlertRules((prev) => ({ ...prev, ...newRules }));
-    logAuditAction('ALERT_RULES_UPDATE', newRules);
-  };
 
   const toggleEngineImmobilizer = async (vehicleId: string, lock: boolean): Promise<boolean> => {
     const targetVeh = vehicles.find((v) => v.id === vehicleId);
     if (!targetVeh) return false;
 
-    if (!isDemoMode && targetVeh.traccar_id) {
+    if (targetVeh.traccar_id) {
       await traccarApi.sendCommand(targetVeh.traccar_id, lock ? 'engineStop' : 'engineResume');
     }
 

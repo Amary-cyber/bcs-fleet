@@ -41,7 +41,7 @@ export const VehiclesPage: React.FC<VehiclesPageProps> = ({
 }) => {
   const { vehicles, drivers, addVehicle, updateVehicle, deleteVehicle } = useFleet();
   const { role } = useAuth();
-  const { isDemoMode } = useTraccar();
+  const { traccarConnected } = useTraccar();
 
   // Layout View Mode & Selection
   const [viewMode, setViewMode] = useState<'GRID' | 'TABLE'>('TABLE');
@@ -82,7 +82,6 @@ export const VehiclesPage: React.FC<VehiclesPageProps> = ({
 
   // Fetch Traccar devices for picker & unassociated devices banner
   const fetchLiveTraccarDevices = async () => {
-    if (isDemoMode) return;
     setIsLoadingTraccarDevices(true);
     try {
       const liveDevs = await traccarApi.getDevices();
@@ -98,7 +97,7 @@ export const VehiclesPage: React.FC<VehiclesPageProps> = ({
 
   useEffect(() => {
     fetchLiveTraccarDevices();
-  }, [isDemoMode]);
+  }, [traccarConnected]);
 
   // Compute Unassociated Traccar Devices
   const unassociatedDevices = traccarLiveDevices.filter((tDev) => {
@@ -289,8 +288,8 @@ export const VehiclesPage: React.FC<VehiclesPageProps> = ({
         </div>
       </div>
 
-      {/* Banner for Unassociated Traccar Devices in MODE LIVE */}
-      {!isDemoMode && unassociatedDevices.length > 0 && (
+      {/* Banner for Unassociated Traccar Devices in Production */}
+      {unassociatedDevices.length > 0 && (
         <div className="glass-panel p-4 rounded-2xl border border-amber-500/30 bg-amber-500/5 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2 text-amber-400 font-bold text-xs font-mono">
@@ -798,10 +797,10 @@ export const VehiclesPage: React.FC<VehiclesPageProps> = ({
               <div className="p-3 rounded-xl bg-slate-950 border border-cyan-500/30 space-y-2">
                 <label className="block text-cyan-400 font-mono font-bold text-[11px] flex items-center justify-between">
                   <span>SÉLECTION DU TRACEUR TRACCAR 6.5 *</span>
-                  {!isDemoMode && <span className="text-[10px] text-emerald-400">● En direct du serveur</span>}
+                  <span className="text-[10px] text-emerald-400">● En direct du serveur</span>
                 </label>
 
-                {!isDemoMode && traccarLiveDevices.length > 0 ? (
+                {traccarLiveDevices.length > 0 ? (
                   <select
                     value={formTraccarId}
                     onChange={(e) => {

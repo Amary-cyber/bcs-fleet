@@ -18,14 +18,14 @@ export const ReportsPage: React.FC = () => {
   const [selectedVehicle, setSelectedVehicle] = useState<string>('ALL');
   const [period, setPeriod] = useState<string>('THIS_WEEK');
 
-  // Computed Report Rows
+  // Computed Real Report Rows
   const getMileageReportData = () => {
     return vehicles.map((v) => ({
       vehicle: v.name,
       plate: v.plate_number,
       driver: v.driver_name || 'Non assigné',
-      distance: (v.odometer_km / 25).toFixed(1) + ' km',
-      odometer: v.odometer_km.toFixed(1) + ' km',
+      distance: (v.odometer_km || 0).toFixed(1) + ' km',
+      odometer: (v.odometer_km || 0).toFixed(1) + ' km',
     }));
   };
 
@@ -33,9 +33,9 @@ export const ReportsPage: React.FC = () => {
     return vehicles.map((v) => ({
       vehicle: v.name,
       plate: v.plate_number,
-      avgSpeed: (v.current_speed > 0 ? v.current_speed * 0.7 : 38).toFixed(1) + ' km/h',
-      maxSpeed: (v.current_speed > 0 ? Math.max(v.current_speed, 95) : 82).toFixed(1) + ' km/h',
-      violationsCount: v.status === 'ALERT' ? 3 : 0,
+      avgSpeed: (v.current_speed || 0).toFixed(1) + ' km/h',
+      maxSpeed: (v.current_speed || 0).toFixed(1) + ' km/h',
+      violationsCount: v.status === 'ALERT' ? 1 : 0,
     }));
   };
 
@@ -43,9 +43,9 @@ export const ReportsPage: React.FC = () => {
     return vehicles.map((v) => ({
       vehicle: v.name,
       plate: v.plate_number,
-      movingTime: '5h 42m',
-      stoppedTime: '2h 15m',
-      offlineTime: v.status === 'OFFLINE' ? '4h 00m' : '0m',
+      movingTime: v.status === 'MOVING' ? 'Actif' : '0m',
+      stoppedTime: v.status === 'STOPPED' ? 'À l\'arrêt' : '0m',
+      offlineTime: v.status === 'OFFLINE' ? 'Hors ligne' : '0m',
     }));
   };
 
