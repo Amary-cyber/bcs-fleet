@@ -9,8 +9,8 @@ export class TraccarApi {
 
   constructor() {
     this.baseUrl = import.meta.env.VITE_TRACCAR_URL || 'https://bcsfleet.bcs-groupe.tech';
-    this.username = import.meta.env.VITE_TRACCAR_USERNAME || 'admin@bcs-groupe.tech';
-    this.password = import.meta.env.VITE_TRACCAR_PASSWORD || 'Amary_BCS_2026!';
+    this.username = import.meta.env.VITE_TRACCAR_USERNAME || 'amarypc1@gmail.com';
+    this.password = import.meta.env.VITE_TRACCAR_PASSWORD || 'radjab12345@';
     this.token = import.meta.env.VITE_TRACCAR_TOKEN || '';
 
     if (this.token) {
