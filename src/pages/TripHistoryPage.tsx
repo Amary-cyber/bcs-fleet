@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import L from 'leaflet';
 import { useFleet } from '../contexts/FleetContext';
 import { traccarApi } from '../services/traccar/traccarApi';
@@ -105,11 +105,21 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
   const polylineLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const animatedMarkerRef = useRef<L.Marker | null>(null);
   const animationTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const lastFittedTripKeyRef = useRef<string | null>(null);
+
+  // Track loaded trip key to prevent re-fetching & unwanted resets during playback
+  const loadedTripKeyRef = useRef<string>('');
+  const lastFittedTripKeyRef = useRef<string>('');
 
   // Single unified positions array for Map, Replay and Distance (Zero desynchronization)
-  const displayPositions: GpsPoint[] = processedData?.displayPositions || [];
-  const currentPoint: GpsPoint | null = displayPositions[playbackIndex] || displayPositions[0] || null;
+  const displayPositions: GpsPoint[] = useMemo(() => {
+    return processedData?.displayPositions || [];
+  }, [processedData]);
+
+  const currentPoint: GpsPoint | null = useMemo(() => {
+    if (displayPositions.length === 0) return null;
+    const safeIdx = Math.max(0, Math.min(playbackIndex, displayPositions.length - 1));
+    return displayPositions[safeIdx] || null;
+  }, [displayPositions, playbackIndex]);
 
   // Invalidate Map Size helper (Essential for zero-grey map on resize/fullscreen)
   const invalidateMapSize = useCallback(() => {
@@ -136,7 +146,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
     }
   }, [displayPositions]);
 
-  // Handle selected vehicle sync
+  // Handle selected vehicle sync from navigation prop
   useEffect(() => {
     if (selectedVehicleIdFromNav && vehicles.some((v) => v.id === selectedVehicleIdFromNav)) {
       setSelectedVehicleId(selectedVehicleIdFromNav);
@@ -162,35 +172,49 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
     };
   }, [invalidateMapSize]);
 
-  // Fetch real positions from Traccar API for selected device and date
-  useEffect(() => {
-    const selectedVeh = vehicles.find((v) => v.id === selectedVehicleId);
-    if (selectedVeh && selectedVeh.traccar_id) {
-      setIsLoading(true);
-      const fromIso = `${selectedDate}T00:00:00Z`;
-      const toIso = `${selectedDate}T23:59:59Z`;
+  // Find traccar_id for selected vehicle
+  const currentVehicleTraccarId = useMemo(() => {
+    const v = vehicles.find((veh) => veh.id === selectedVehicleId);
+    return v?.traccar_id || null;
+  }, [vehicles, selectedVehicleId]);
 
-      traccarApi
-        .getDevicePositions(selectedVeh.traccar_id, fromIso, toIso)
-        .then((rawPositions) => {
-          setIsLoading(false);
-          if (rawPositions && rawPositions.length > 0) {
-            const processed = processTraccarPositions(rawPositions, selectedVeh.traccar_id!);
-            setProcessedData(processed);
-            setPlaybackIndex(0);
-          } else {
-            setProcessedData(null);
-          }
-        })
-        .catch((err) => {
-          console.warn('Notice: Traccar history fetch:', err);
-          setIsLoading(false);
-          setProcessedData(null);
-        });
-    } else {
+  // Fetch real positions from Traccar API ONLY when vehicleId or date changes
+  useEffect(() => {
+    if (!currentVehicleTraccarId) {
       setProcessedData(null);
+      return;
     }
-  }, [selectedVehicleId, selectedDate, vehicles]);
+
+    const tripKey = `${selectedVehicleId}_${selectedDate}_${currentVehicleTraccarId}`;
+    if (loadedTripKeyRef.current === tripKey) {
+      return; // Already loaded, do not reload or reset playback
+    }
+
+    setIsLoading(true);
+    setIsPlaying(false);
+    const fromIso = `${selectedDate}T00:00:00Z`;
+    const toIso = `${selectedDate}T23:59:59Z`;
+
+    traccarApi
+      .getDevicePositions(currentVehicleTraccarId, fromIso, toIso)
+      .then((rawPositions) => {
+        setIsLoading(false);
+        loadedTripKeyRef.current = tripKey;
+        if (rawPositions && rawPositions.length > 0) {
+          const processed = processTraccarPositions(rawPositions, currentVehicleTraccarId);
+          setProcessedData(processed);
+          setPlaybackIndex(0); // Only reset index on genuine new trip load
+        } else {
+          setProcessedData(null);
+          setPlaybackIndex(0);
+        }
+      })
+      .catch((err) => {
+        console.warn('Notice: Traccar history fetch:', err);
+        setIsLoading(false);
+        setProcessedData(null);
+      });
+  }, [selectedVehicleId, selectedDate, currentVehicleTraccarId]);
 
   // Initialize Leaflet Map
   useEffect(() => {
@@ -441,14 +465,17 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
     }
   }, [processedData, selectedVehicleId, selectedDate]);
 
-  // Handle Playback Animation Loop
+  // Handle Playback Animation Loop (Strictly Monotonic 0 -> 1 -> 2 -> ... -> N)
   useEffect(() => {
-    if (!isPlaying) {
-      if (animationTimerRef.current) clearInterval(animationTimerRef.current);
+    if (!isPlaying || displayPositions.length === 0) {
+      if (animationTimerRef.current) {
+        clearInterval(animationTimerRef.current);
+        animationTimerRef.current = null;
+      }
       return;
     }
 
-    const interval = Math.max(50, 1000 / speedMultiplier);
+    const intervalMs = Math.max(50, 1000 / speedMultiplier);
 
     animationTimerRef.current = setInterval(() => {
       setPlaybackIndex((prev) => {
@@ -458,16 +485,19 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
         }
         return prev + 1;
       });
-    }, interval);
+    }, intervalMs);
 
     return () => {
-      if (animationTimerRef.current) clearInterval(animationTimerRef.current);
+      if (animationTimerRef.current) {
+        clearInterval(animationTimerRef.current);
+        animationTimerRef.current = null;
+      }
     };
   }, [isPlaying, speedMultiplier, displayPositions.length]);
 
   // Update animated marker position without resetting user zoom/pan
   useEffect(() => {
-    const pt = displayPositions[playbackIndex];
+    const pt = currentPoint;
     if (pt && animatedMarkerRef.current && mapRef.current) {
       animatedMarkerRef.current.setLatLng([pt.lat, pt.lng]);
       const markerIcon = L.divIcon({
@@ -489,7 +519,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
         mapRef.current.panTo([pt.lat, pt.lng], { animate: true });
       }
     }
-  }, [playbackIndex, displayPositions, isFollowVehicle]);
+  }, [currentPoint, isFollowVehicle]);
 
   // Toggle Browser Native Fullscreen Mode
   const toggleFullscreen = async (e?: React.MouseEvent) => {
