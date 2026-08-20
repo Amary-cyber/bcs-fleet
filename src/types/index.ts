@@ -392,3 +392,29 @@ export interface WebSocketMessageData {
   events?: any[];
 }
 
+export interface RoutePoint {
+  lat: number;
+  lng: number;
+  speed: number;
+  heading: number;
+  timestamp: string;
+}
+
+export interface Trip {
+  id: string;
+  vehicle_id: string;
+  vehicle_name: string;
+  vehicle_plate: string;
+  start_time: string;
+  end_time: string;
+  distance_km: number;
+  duration_seconds: number;
+  avg_speed_kmh: number;
+  max_speed_kmh: number;
+  stops_count: number;
+  stop_duration_seconds: number;
+  route_points: RoutePoint[];
+  start_address: string;
+  end_address: string;
+}
+

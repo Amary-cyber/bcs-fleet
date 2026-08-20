@@ -1,4 +1,4 @@
-import { TraccarPosition, RoutePoint } from '../types';
+import type { TraccarPosition, RoutePoint } from '../types';
 
 export interface GpsSegment {
   id: string;
