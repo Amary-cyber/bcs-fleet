@@ -20,6 +20,7 @@ import {
 import { useAuth } from './AuthContext';
 import { traccarApi } from '../services/traccar/traccarApi';
 import { traccarWs } from '../services/traccar/traccarWebSocket';
+import { traccarEventManager } from '../services/traccar/traccarEvents';
 
 interface FleetContextType {
   vehicles: Vehicle[];
@@ -103,31 +104,6 @@ const DEFAULT_ALERT_RULES: AlertRuleConfig = {
   notify_ignition: true,
 };
 
-// Geofence Math Helper Functions
-const isPointInCircle = (lat: number, lng: number, center: [number, number], radiusMeters: number): boolean => {
-  const R = 6371000;
-  const dLat = ((center[0] - lat) * Math.PI) / 180;
-  const dLng = ((center[1] - lng) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos((lat * Math.PI) / 180) * Math.cos((center[0] * Math.PI) / 180) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c <= radiusMeters;
-};
-
-const isPointInPolygon = (lat: number, lng: number, polygon: [number, number][]): boolean => {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i][0],
-      yi = polygon[i][1];
-    const xj = polygon[j][0],
-      yj = polygon[j][1];
-    const intersect = yi > lng !== yj > lng && lat < ((xj - xi) * (lng - yi)) / (yj - yi) + xi;
-    if (intersect) inside = !inside;
-  }
-  return inside;
-};
-
 // Safe JSON parser for localStorage persistence
 function loadPersisted<T>(key: string, defaultValue: T): T {
   try {
@@ -148,7 +124,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [drivers, setDrivers] = useState<Driver[]>(() => loadPersisted('bcs_fleet_drivers', []));
   const [devices, setDevices] = useState<Device[]>([]);
   const [geofences, setGeofences] = useState<Geofence[]>(() => loadPersisted('bcs_fleet_geofences', []));
-  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [alerts, setAlerts] = useState<Alert[]>(() => loadPersisted('bcs_fleet_alerts', []));
   const [toastNotification, setToastNotification] = useState<Alert | null>(null);
   const [alertRules, setAlertRules] = useState<AlertRuleConfig>(() =>
     loadPersisted('bcs_fleet_alert_rules', DEFAULT_ALERT_RULES)
@@ -181,6 +157,10 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [geofences]);
 
   useEffect(() => {
+    localStorage.setItem('bcs_fleet_alerts', JSON.stringify(alerts.slice(0, 500)));
+  }, [alerts]);
+
+  useEffect(() => {
     localStorage.setItem('bcs_fleet_maint_records', JSON.stringify(maintenanceRecords));
   }, [maintenanceRecords]);
 
@@ -208,31 +188,26 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     localStorage.setItem('bcs_fleet_settings', JSON.stringify(settings));
   }, [settings]);
 
-  // Anti-Spam Idempotency Trackers
-  const speedingStateRef = useRef<Record<string, boolean>>({});
-  const geofenceStateRef = useRef<Record<string, Record<string, 'INSIDE' | 'OUTSIDE'>>>({});
-  const lowBatteryStateRef = useRef<Record<string, boolean>>({});
-  const processedEventIdsRef = useRef<Set<string>>(new Set());
-
   const clearToast = () => setToastNotification(null);
 
-  // Helper to add an alert
-  const createAlert = useCallback((alertData: Omit<Alert, 'id' | 'is_read' | 'timestamp'>) => {
-    const newAlert: Alert = {
-      ...alertData,
-      id: `alt-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      is_read: false,
-      timestamp: new Date().toISOString(),
-      created_at: new Date().toISOString(),
-    };
+  // Helper to add an alert with deduplication and notification dispatch
+  const pushAlert = useCallback((newAlert: Alert) => {
+    setAlerts((prev) => {
+      // Deduplicate by ID
+      if (prev.some((a) => a.id === newAlert.id)) {
+        return prev;
+      }
+      return [newAlert, ...prev.slice(0, 499)];
+    });
 
-    setAlerts((prev) => [newAlert, ...prev]);
-    setToastNotification(newAlert);
+    if (newAlert.severity === 'CRITICAL' || newAlert.severity === 'WARNING') {
+      setToastNotification(newAlert);
+    }
 
     // Browser Notification API
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
-        new Notification(newAlert.title || `Alerte Flotte: ${newAlert.vehicle_name}`, {
+        new Notification(newAlert.title || `Alerte: ${newAlert.vehicle_name}`, {
           body: `${newAlert.vehicle_plate} — ${newAlert.message}`,
           icon: '/favicon.svg',
         });
@@ -327,127 +302,6 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   };
 
-  // Evaluate Rules Engine on Real Telemetry Update
-  const evaluateTelemetryRules = useCallback(
-    (vehicle: Vehicle) => {
-      // 1. SPEEDING EVALUATION
-      if (alertRules.notify_speeding && vehicle.current_speed > 0) {
-        const speedLimit = alertRules.speed_limit_kmh + alertRules.speed_tolerance_kmh;
-        const vehId = vehicle.id;
-        const isCurrentlySpeeding = vehicle.current_speed > speedLimit;
-        const wasSpeeding = speedingStateRef.current[vehId] || false;
-
-        if (isCurrentlySpeeding && !wasSpeeding) {
-          speedingStateRef.current[vehId] = true;
-          createAlert({
-            vehicle_id: vehicle.id,
-            vehicle_name: vehicle.name,
-            vehicle_plate: vehicle.plate_number,
-            traccar_device_id: vehicle.traccar_id,
-            alert_type: 'SPEEDING',
-            severity: 'WARNING',
-            title: `🚨 EXCÈS DE VITESSE: ${vehicle.name}`,
-            message: `Vitesse mesurée à ${vehicle.current_speed} km/h (Limite: ${alertRules.speed_limit_kmh} km/h).`,
-            speed: vehicle.current_speed,
-            speed_limit: alertRules.speed_limit_kmh,
-            lat: vehicle.current_lat,
-            lng: vehicle.current_lng,
-          });
-        } else if (vehicle.current_speed <= alertRules.speed_limit_kmh && wasSpeeding) {
-          speedingStateRef.current[vehId] = false;
-        }
-      }
-
-      // 2. GEOFENCES ENTER / EXIT EVALUATION
-      if (alertRules.notify_geofence && vehicle.current_lat && vehicle.current_lng) {
-        const vehId = vehicle.id;
-        if (!geofenceStateRef.current[vehId]) {
-          geofenceStateRef.current[vehId] = {};
-        }
-
-        geofences.forEach((geo) => {
-          let isInside = false;
-          if (geo.type === 'CIRCLE' && 'center' in geo.coordinates) {
-            isInside = isPointInCircle(
-              vehicle.current_lat,
-              vehicle.current_lng,
-              geo.coordinates.center,
-              geo.coordinates.radius
-            );
-          } else if (geo.type === 'POLYGON' && Array.isArray(geo.coordinates)) {
-            isInside = isPointInPolygon(vehicle.current_lat, vehicle.current_lng, geo.coordinates as [number, number][]);
-          }
-
-          const prevState = geofenceStateRef.current[vehId][geo.id] || 'OUTSIDE';
-
-          if (isInside && prevState === 'OUTSIDE') {
-            geofenceStateRef.current[vehId][geo.id] = 'INSIDE';
-            if (geo.notify_on_enter) {
-              createAlert({
-                vehicle_id: vehicle.id,
-                vehicle_name: vehicle.name,
-                vehicle_plate: vehicle.plate_number,
-                traccar_device_id: vehicle.traccar_id,
-                alert_type: 'GEOFENCE_ENTER',
-                severity: 'INFO',
-                title: `📍 ENTRÉE DANS ZONE: ${geo.name}`,
-                message: `${vehicle.name} (${vehicle.plate_number}) est entré dans la zone ${geo.name}.`,
-                lat: vehicle.current_lat,
-                lng: vehicle.current_lng,
-                geofence_id: geo.id,
-                geofence_name: geo.name,
-              });
-            }
-          } else if (!isInside && prevState === 'INSIDE') {
-            geofenceStateRef.current[vehId][geo.id] = 'OUTSIDE';
-            if (geo.notify_on_exit) {
-              createAlert({
-                vehicle_id: vehicle.id,
-                vehicle_name: vehicle.name,
-                vehicle_plate: vehicle.plate_number,
-                traccar_device_id: vehicle.traccar_id,
-                alert_type: 'GEOFENCE_EXIT',
-                severity: 'WARNING',
-                title: `⚠️ SORTIE DE ZONE: ${geo.name}`,
-                message: `${vehicle.name} (${vehicle.plate_number}) est sorti de la zone ${geo.name}.`,
-                lat: vehicle.current_lat,
-                lng: vehicle.current_lng,
-                geofence_id: geo.id,
-                geofence_name: geo.name,
-              });
-            }
-          }
-        });
-      }
-
-      // 3. LOW BATTERY EVALUATION
-      if (alertRules.notify_low_battery && vehicle.battery_level !== null && vehicle.battery_level !== undefined) {
-        const vehId = vehicle.id;
-        const isLow = vehicle.battery_level < alertRules.low_battery_threshold;
-        const wasLow = lowBatteryStateRef.current[vehId] || false;
-
-        if (isLow && !wasLow) {
-          lowBatteryStateRef.current[vehId] = true;
-          createAlert({
-            vehicle_id: vehicle.id,
-            vehicle_name: vehicle.name,
-            vehicle_plate: vehicle.plate_number,
-            traccar_device_id: vehicle.traccar_id,
-            alert_type: 'LOW_BATTERY',
-            severity: 'WARNING',
-            title: `🔋 BATTERIE FAIBLE: ${vehicle.name}`,
-            message: `Niveau de batterie GPS à ${vehicle.battery_level}% (Seuil: ${alertRules.low_battery_threshold}%).`,
-            lat: vehicle.current_lat,
-            lng: vehicle.current_lng,
-          });
-        } else if (vehicle.battery_level >= alertRules.low_battery_threshold + 5 && wasLow) {
-          lowBatteryStateRef.current[vehId] = false;
-        }
-      }
-    },
-    [alertRules, createAlert, geofences]
-  );
-
   // Synchronize 100% Real Traccar Data (REST + WebSocket)
   useEffect(() => {
     const syncLiveTraccarData = async () => {
@@ -482,7 +336,11 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                 (v) => v.traccar_id === d.id || v.device_id === d.id.toString() || v.device_imei === d.uniqueId
               );
               const liveVeh = buildLiveVehicleFromTraccar(d, pos, existing);
-              evaluateTelemetryRules(liveVeh);
+
+              // Evaluate Telemetry rules via centralized manager
+              const generated = traccarEventManager.evaluateTelemetry(liveVeh, alertRules, geofences);
+              generated.forEach((alt) => pushAlert(alt));
+
               return liveVeh;
             });
           });
@@ -503,6 +361,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // WebSocket Realtime Subscribers
     traccarWs.connect();
     const unsubscribe = traccarWs.subscribe((wsMessage) => {
+      // 1. Process positions stream
       if (wsMessage.positions && wsMessage.positions.length > 0) {
         wsMessage.positions.forEach((pos) => {
           setVehicles((prev) =>
@@ -528,7 +387,10 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   odometer_km: odometerKm,
                   last_position_time: pos.fixTime || pos.deviceTime || new Date().toISOString(),
                 };
-                evaluateTelemetryRules(updated);
+
+                const generated = traccarEventManager.evaluateTelemetry(updated, alertRules, geofences);
+                generated.forEach((alt) => pushAlert(alt));
+
                 return updated;
               }
               return v;
@@ -537,32 +399,16 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         });
       }
 
-      // Process Traccar Events Stream
+      // 2. Process Traccar Events Stream via central normalizer
       if (wsMessage.events && wsMessage.events.length > 0) {
         wsMessage.events.forEach((evt: any) => {
-          const eventKey = `${evt.id || evt.eventTime}-${evt.deviceId}-${evt.type}`;
-          if (!processedEventIdsRef.current.has(eventKey)) {
-            processedEventIdsRef.current.add(eventKey);
-
-            setVehicles((prev) => {
-              const matched = prev.find((v) => v.traccar_id === evt.deviceId);
-              if (matched) {
-                createAlert({
-                  vehicle_id: matched.id,
-                  vehicle_name: matched.name,
-                  vehicle_plate: matched.plate_number,
-                  traccar_device_id: matched.traccar_id,
-                  alert_type: evt.type === 'overspeed' ? 'SPEEDING' : 'UNAUTHORIZED_MOVEMENT',
-                  severity: evt.type === 'alarm' ? 'CRITICAL' : 'WARNING',
-                  title: `Événement Traccar: ${evt.type}`,
-                  message: `Événement ${evt.type} reçu du boîtier Traccar ${matched.name}.`,
-                  lat: matched.current_lat,
-                  lng: matched.current_lng,
-                });
-              }
-              return prev;
-            });
-          }
+          setVehicles((currentVehicles) => {
+            const normalizedAlert = traccarEventManager.processTraccarRawEvent(evt, currentVehicles, geofences);
+            if (normalizedAlert) {
+              pushAlert(normalizedAlert);
+            }
+            return currentVehicles;
+          });
         });
       }
     });
@@ -572,7 +418,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       unsubscribe();
       unsubscribeReconnect();
     };
-  }, [evaluateTelemetryRules]);
+  }, [alertRules, geofences, pushAlert]);
 
   // Actions
   const addVehicle = (newVehData: Partial<Vehicle>) => {
@@ -681,26 +527,53 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const acknowledgeAlert = (id: string) => {
+    const nowIso = new Date().toISOString();
+    const ackUser = user?.email || 'admin@bcsfleet.sn';
+
     setAlerts((prev) =>
       prev.map((a) =>
         a.id === id
           ? {
               ...a,
+              is_read: true,
               acknowledged: true,
-              acknowledged_by: user?.email || 'admin@bcsfleet.sn',
-              acknowledged_at: new Date().toISOString(),
+              acknowledged_by: ackUser,
+              acknowledged_at: nowIso,
             }
           : a
       )
     );
+
+    logAuditAction('ALERT_ACKNOWLEDGED', {
+      alert_id: id,
+      acknowledged_by: ackUser,
+      acknowledged_at: nowIso,
+    });
   };
 
   const markAllAlertsRead = () => {
-    setAlerts((prev) => prev.map((a) => ({ ...a, is_read: true })));
+    const nowIso = new Date().toISOString();
+    const ackUser = user?.email || 'admin@bcsfleet.sn';
+
+    setAlerts((prev) =>
+      prev.map((a) => ({
+        ...a,
+        is_read: true,
+        acknowledged: true,
+        acknowledged_by: a.acknowledged_by || ackUser,
+        acknowledged_at: a.acknowledged_at || nowIso,
+      }))
+    );
+
+    logAuditAction('ALL_ALERTS_ACKNOWLEDGED', { acknowledged_by: ackUser });
   };
 
   const updateAlertRules = (newRules: Partial<AlertRuleConfig>) => {
-    setAlertRules((prev) => ({ ...prev, ...newRules }));
+    setAlertRules((prev) => {
+      const updated = { ...prev, ...newRules };
+      logAuditAction('ALERT_RULE_UPDATED', { new_rules: updated });
+      return updated;
+    });
   };
 
   // Maintenance & Expenses CRUD

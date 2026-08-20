@@ -22,7 +22,7 @@ export const Header: React.FC<{ onMobileMenuToggle: () => void }> = ({ onMobileM
   const { setDrawerOpen } = useNotifications();
   const { theme, toggleTheme } = useTheme();
 
-  const unreadAlertsCount = alerts.filter((a) => !a.is_read).length;
+  const unreadAlertsCount = alerts.filter((a) => !a.acknowledged).length;
 
   return (
     <header className="sticky top-0 z-30 h-16 bg-slate-900/90 dark:bg-slate-900/90 light:bg-white/95 backdrop-blur-xl border-b border-slate-800/80 dark:border-slate-800/80 light:border-slate-200 px-4 lg:px-6 flex items-center justify-between shadow-lg transition-colors">
