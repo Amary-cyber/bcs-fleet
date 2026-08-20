@@ -7,7 +7,6 @@ import {
   Minimize,
   Crosshair,
   MapPin,
-  Eye,
   Radio,
   Compass,
   Gauge,
@@ -16,9 +15,11 @@ import {
   History,
   Lock,
   Search,
+  X,
+  Navigation,
 } from 'lucide-react';
 
-export type MapTileLayerType = 'voyager' | 'dark' | 'satellite' | 'osm';
+export type MapTileLayerType = 'voyager' | 'dark' | 'satellite' | 'osm' | 'topo';
 
 interface MapViewProps {
   vehicles: Vehicle[];
@@ -31,6 +32,7 @@ interface MapViewProps {
   zoom?: number;
   isFollowMode?: boolean;
   onToggleFollowMode?: (enabled: boolean) => void;
+  showRosterOverlayInFullscreen?: boolean;
 }
 
 const TILE_LAYERS: Record<
@@ -55,9 +57,15 @@ const TILE_LAYERS: Record<
     attribution: '&copy; Esri &copy; DigitalGlobe &copy; GeoEye',
   },
   osm: {
-    name: 'OpenStreetMap',
+    name: 'OpenStreetMap Standard',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
     attribution: '&copy; OpenStreetMap contributors',
+    subdomains: ['a', 'b', 'c'],
+  },
+  topo: {
+    name: 'Relief & Topographie',
+    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenTopoMap &copy; OpenStreetMap',
     subdomains: ['a', 'b', 'c'],
   },
 };
@@ -74,10 +82,12 @@ export const MapView: React.FC<MapViewProps> = ({
   isFollowMode = false,
   onToggleFollowMode,
 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const activeTileLayerRef = useRef<L.TileLayer | null>(null);
   const markersRef = useRef<Map<string, L.Marker>>(new Map());
+  const clusterMarkersRef = useRef<L.Marker[]>([]);
   const geofenceLayersRef = useRef<L.LayerGroup | null>(null);
 
   const [activeLayer, setActiveLayer] = useState<MapTileLayerType>('voyager');
@@ -85,6 +95,19 @@ export const MapView: React.FC<MapViewProps> = ({
   const [showGeofences, setShowGeofences] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isFollowSuspended, setIsFollowSuspended] = useState<boolean>(false);
+  const [currentZoom, setCurrentZoom] = useState<number>(zoom);
+
+  // Invalidate Map Size helper (Essential for zero-grey map on resize/fullscreen)
+  const invalidateMapSize = useCallback(() => {
+    if (mapInstanceRef.current) {
+      requestAnimationFrame(() => {
+        mapInstanceRef.current?.invalidateSize();
+      });
+      setTimeout(() => {
+        mapInstanceRef.current?.invalidateSize();
+      }, 150);
+    }
+  }, []);
 
   // Initialize Leaflet Map
   useEffect(() => {
@@ -96,10 +119,10 @@ export const MapView: React.FC<MapViewProps> = ({
       zoomControl: false,
     });
 
-    const initialLayerConfig = TILE_LAYERS[activeLayer];
-    const initialTileLayer = L.tileLayer(initialLayerConfig.url, {
-      attribution: initialLayerConfig.attribution,
-      subdomains: initialLayerConfig.subdomains || 'abc',
+    const cfg = TILE_LAYERS[activeLayer];
+    const initialTileLayer = L.tileLayer(cfg.url, {
+      attribution: cfg.attribution,
+      subdomains: cfg.subdomains || 'abc',
       maxZoom: 19,
     }).addTo(map);
 
@@ -107,7 +130,11 @@ export const MapView: React.FC<MapViewProps> = ({
     geofenceLayersRef.current = L.layerGroup().addTo(map);
     mapInstanceRef.current = map;
 
-    // Detect user pan/drag to suspend auto-follow
+    // Listeners
+    map.on('zoomend', () => {
+      setCurrentZoom(map.getZoom());
+    });
+
     map.on('dragstart', () => {
       if (isFollowMode) {
         setIsFollowSuspended(true);
@@ -119,6 +146,23 @@ export const MapView: React.FC<MapViewProps> = ({
       mapInstanceRef.current = null;
     };
   }, []);
+
+  // Handle Fullscreen state change from Browser API
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!document.fullscreenElement;
+      setIsFullscreen(isCurrentlyFullscreen);
+      invalidateMapSize();
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    window.addEventListener('resize', invalidateMapSize);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('resize', invalidateMapSize);
+    };
+  }, [invalidateMapSize]);
 
   // Switch Tile Layer Instantly
   useEffect(() => {
@@ -194,11 +238,50 @@ export const MapView: React.FC<MapViewProps> = ({
     });
   }, [geofences, showGeofences]);
 
-  // Update or Create Vehicle Markers (Differential Render)
+  // Render Vehicle Markers or Clusters (Differential Render)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
 
+    // Clear previous cluster markers
+    clusterMarkersRef.current.forEach((m) => m.remove());
+    clusterMarkersRef.current = [];
+
+    // CLUSTERING MODE: If map is zoomed out (zoom < 10) and multiple vehicles exist
+    if (currentZoom < 10 && vehicles.length > 3) {
+      // Hide individual markers
+      markersRef.current.forEach((m) => m.remove());
+      markersRef.current.clear();
+
+      // Cluster vehicles into centroid badge
+      const clusterCenter = [
+        vehicles.reduce((acc, v) => acc + v.current_lat, 0) / vehicles.length,
+        vehicles.reduce((acc, v) => acc + v.current_lng, 0) / vehicles.length,
+      ] as [number, number];
+
+      const clusterHtml = `
+        <div class="w-12 h-12 rounded-2xl bg-cyan-500/90 border-2 border-white shadow-2xl flex flex-col items-center justify-center cursor-pointer text-slate-950 font-black font-mono">
+          <span class="text-xs">${vehicles.length}</span>
+          <span class="text-[8px] uppercase tracking-tighter">Véhicules</span>
+        </div>
+      `;
+
+      const clusterIcon = L.divIcon({
+        html: clusterHtml,
+        className: 'traccar-cluster-icon',
+        iconSize: [48, 48],
+        iconAnchor: [24, 24],
+      });
+
+      const clusterMarker = L.marker(clusterCenter, { icon: clusterIcon }).addTo(map);
+      clusterMarker.on('click', () => {
+        fitFleetBounds();
+      });
+      clusterMarkersRef.current.push(clusterMarker);
+      return;
+    }
+
+    // INDIVIDUAL TRACCAR MARKERS MODE (Zoom >= 10)
     const currentMarkerIds = new Set<string>();
 
     vehicles.forEach((vehicle) => {
@@ -288,6 +371,11 @@ export const MapView: React.FC<MapViewProps> = ({
             ? `${vehicle.battery_level}%`
             : 'N/D';
 
+        const odoStr =
+          vehicle.odometer_km !== null && vehicle.odometer_km !== undefined
+            ? `${vehicle.odometer_km.toLocaleString('fr-FR')} km`
+            : 'N/D';
+
         popupContent.innerHTML = `
           <div class="flex items-center justify-between border-b border-slate-700/80 pb-2 mb-2">
             <div>
@@ -304,6 +392,7 @@ export const MapView: React.FC<MapViewProps> = ({
             <div class="flex justify-between"><span class="text-slate-400">Cap / Direction:</span> <span>${heading}° (${getCompassLabel(heading)})</span></div>
             <div class="flex justify-between"><span class="text-slate-400">Chauffeur:</span> <span class="text-cyan-300">${vehicle.driver_name || 'Non assigné'}</span></div>
             <div class="flex justify-between"><span class="text-slate-400">Batterie Télémétrique:</span> <span class="text-emerald-400">${batteryStr}</span></div>
+            <div class="flex justify-between"><span class="text-slate-400">Odomètre:</span> <span class="text-slate-200">${odoStr}</span></div>
             <div class="flex justify-between"><span class="text-slate-400">Dernière Réception:</span> <span class="text-slate-300">${lastTimeStr}</span></div>
             <div class="flex justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-800">
               <span>GPS:</span> <span>${vehicle.current_lat.toFixed(5)}, ${vehicle.current_lng.toFixed(5)}</span>
@@ -315,7 +404,7 @@ export const MapView: React.FC<MapViewProps> = ({
               Suivre
             </button>
             <button id="pop-hist-${vehicle.id}" class="flex-1 px-2 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-[10px] font-bold text-slate-200 border border-slate-700 transition-colors">
-              Replay
+              Historique
             </button>
             <button id="pop-immob-${vehicle.id}" class="flex-1 px-2 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-[10px] font-bold text-rose-400 border border-rose-500/30 transition-colors">
               Relais
@@ -361,7 +450,7 @@ export const MapView: React.FC<MapViewProps> = ({
         markersRef.current.delete(id);
       }
     });
-  }, [vehicles, onVehicleSelect, onHistoryClick, onImmobilizeClick, onToggleFollowMode]);
+  }, [vehicles, currentZoom, onVehicleSelect, onHistoryClick, onImmobilizeClick, onToggleFollowMode, fitFleetBounds]);
 
   // Handle Live Follow & Focus Selected Vehicle
   useEffect(() => {
@@ -383,24 +472,34 @@ export const MapView: React.FC<MapViewProps> = ({
     return dirs[Math.round(deg / 45) % 8];
   }
 
-  // Toggle Fullscreen mode
-  const toggleFullscreen = () => {
-    if (!mapContainerRef.current) return;
-    if (!document.fullscreenElement) {
-      mapContainerRef.current.requestFullscreen().catch((err) => console.warn(err));
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen().catch((err) => console.warn(err));
-      setIsFullscreen(false);
+  // Toggle Browser Native Fullscreen Mode (Strictly handled with resize & invalidateSize)
+  const toggleFullscreen = async () => {
+    if (!containerRef.current) return;
+
+    try {
+      if (!document.fullscreenElement) {
+        await containerRef.current.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.warn('Le mode plein écran n\'est pas disponible dans ce navigateur:', err);
+    } finally {
+      invalidateMapSize();
     }
   };
 
   return (
-    <div className="w-full h-full relative rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-950">
+    <div
+      ref={containerRef}
+      className={`w-full h-full relative rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-950 transition-all ${
+        isFullscreen ? 'fixed inset-0 z-50 rounded-none border-0' : ''
+      }`}
+    >
       {/* Map Target DOM */}
-      <div ref={mapContainerRef} className="w-full h-full min-h-[500px]" />
+      <div ref={mapContainerRef} className="w-full h-full min-h-[450px]" />
 
-      {/* Floating Map Controls (Top Right) */}
+      {/* Floating Map Action Controls (Top Right) */}
       <div className="absolute top-4 right-4 z-20 flex flex-col space-y-2">
         {/* Layer Selector Toggle */}
         <div className="relative">
@@ -413,7 +512,7 @@ export const MapView: React.FC<MapViewProps> = ({
           </button>
 
           {showLayerSelector && (
-            <div className="absolute right-0 mt-2 w-48 rounded-xl bg-slate-900/95 border border-slate-700 shadow-2xl p-2 z-30 space-y-1 text-xs backdrop-blur-xl">
+            <div className="absolute right-0 mt-2 w-52 rounded-xl bg-slate-900/95 border border-slate-700 shadow-2xl p-2 z-30 space-y-1 text-xs backdrop-blur-xl animate-in fade-in">
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 py-1">
                 Fonds Cartographiques
               </div>
@@ -442,7 +541,7 @@ export const MapView: React.FC<MapViewProps> = ({
         <button
           onClick={fitFleetBounds}
           className="p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 shadow-2xl backdrop-blur-md transition-all"
-          title="Centrer sur tous les véhicules"
+          title="Centrer toute la flotte active"
         >
           <Crosshair className="w-4 h-4" />
         </button>
@@ -460,11 +559,15 @@ export const MapView: React.FC<MapViewProps> = ({
           <Shield className="w-4 h-4" />
         </button>
 
-        {/* Fullscreen Toggle */}
+        {/* Native Fullscreen Toggle Button */}
         <button
           onClick={toggleFullscreen}
-          className="p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 shadow-2xl backdrop-blur-md transition-all"
-          title="Mode Plein Écran"
+          className={`p-2.5 rounded-xl border shadow-2xl backdrop-blur-md transition-all ${
+            isFullscreen
+              ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+              : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border-slate-700'
+          }`}
+          title={isFullscreen ? '✕ Quitter le plein écran (Échap)' : '⛶ Mode Plein Écran'}
         >
           {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
         </button>
@@ -474,13 +577,15 @@ export const MapView: React.FC<MapViewProps> = ({
       <div className="absolute bottom-6 right-4 z-20 flex flex-col space-y-1.5">
         <button
           onClick={() => mapInstanceRef.current?.zoomIn()}
-          className="w-8 h-8 rounded-lg bg-slate-900/90 hover:bg-slate-800 text-white font-bold flex items-center justify-center border border-slate-700 shadow-xl backdrop-blur-md text-sm"
+          className="w-8 h-8 rounded-lg bg-slate-900/90 hover:bg-slate-800 text-white font-bold flex items-center justify-center border border-slate-700 shadow-xl backdrop-blur-md text-sm transition-colors"
+          title="Zoom avant"
         >
           +
         </button>
         <button
           onClick={() => mapInstanceRef.current?.zoomOut()}
-          className="w-8 h-8 rounded-lg bg-slate-900/90 hover:bg-slate-800 text-white font-bold flex items-center justify-center border border-slate-700 shadow-xl backdrop-blur-md text-sm"
+          className="w-8 h-8 rounded-lg bg-slate-900/90 hover:bg-slate-800 text-white font-bold flex items-center justify-center border border-slate-700 shadow-xl backdrop-blur-md text-sm transition-colors"
+          title="Zoom arrière"
         >
           -
         </button>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import { useFleet } from '../contexts/FleetContext';
 import { traccarApi } from '../services/traccar/traccarApi';
@@ -25,9 +25,49 @@ import {
   MapPin,
   Compass,
   Zap,
-  ArrowRight,
+  Layers,
+  Maximize,
+  Minimize,
+  SkipBack,
+  SkipForward,
   ShieldAlert,
 } from 'lucide-react';
+import { MapTileLayerType } from '../components/map/MapView';
+
+const HISTORY_TILE_LAYERS: Record<
+  MapTileLayerType,
+  { name: string; url: string; attribution: string; subdomains?: string[] }
+> = {
+  voyager: {
+    name: 'Standard (Voyager)',
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; CARTO &copy; OpenStreetMap',
+    subdomains: ['a', 'b', 'c', 'd'],
+  },
+  dark: {
+    name: 'Sombre (Dark Matter)',
+    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    attribution: '&copy; CARTO &copy; OpenStreetMap',
+    subdomains: ['a', 'b', 'c', 'd'],
+  },
+  satellite: {
+    name: 'Satellite (Imagerie ESRI)',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attribution: '&copy; Esri &copy; DigitalGlobe &copy; GeoEye',
+  },
+  osm: {
+    name: 'OpenStreetMap Standard',
+    url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenStreetMap contributors',
+    subdomains: ['a', 'b', 'c'],
+  },
+  topo: {
+    name: 'Relief & Topographie',
+    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    attribution: '&copy; OpenTopoMap &copy; OpenStreetMap',
+    subdomains: ['a', 'b', 'c'],
+  },
+};
 
 interface TripHistoryPageProps {
   selectedVehicleIdFromNav?: string | null;
@@ -43,14 +83,19 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
   const [processedData, setProcessedData] = useState<ProcessedTripHistory | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isDebugOpen, setIsDebugOpen] = useState<boolean>(false);
+  const [activeLayer, setActiveLayer] = useState<MapTileLayerType>('voyager');
+  const [showLayerSelector, setShowLayerSelector] = useState<boolean>(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
   // Playback Player State
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [playbackIndex, setPlaybackIndex] = useState<number>(0);
   const [speedMultiplier, setSpeedMultiplier] = useState<number>(2);
 
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
+  const activeTileLayerRef = useRef<L.TileLayer | null>(null);
   const polylineLayerGroupRef = useRef<L.LayerGroup | null>(null);
   const animatedMarkerRef = useRef<L.Marker | null>(null);
   const animationTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -58,6 +103,18 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
   // Single unified positions array for Map, Replay and Distance (Zero desynchronization)
   const displayPositions: GpsPoint[] = processedData?.displayPositions || [];
   const currentPoint: GpsPoint | null = displayPositions[playbackIndex] || displayPositions[0] || null;
+
+  // Invalidate Map Size helper (Essential for zero-grey map on resize/fullscreen)
+  const invalidateMapSize = useCallback(() => {
+    if (mapRef.current) {
+      requestAnimationFrame(() => {
+        mapRef.current?.invalidateSize();
+      });
+      setTimeout(() => {
+        mapRef.current?.invalidateSize();
+      }, 150);
+    }
+  }, []);
 
   // Handle selected vehicle sync
   useEffect(() => {
@@ -67,6 +124,23 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       setSelectedVehicleId(vehicles[0].id);
     }
   }, [selectedVehicleIdFromNav, vehicles, selectedVehicleId]);
+
+  // Fullscreen change synchronization
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!document.fullscreenElement;
+      setIsFullscreen(isCurrentlyFullscreen);
+      invalidateMapSize();
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    window.addEventListener('resize', invalidateMapSize);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('resize', invalidateMapSize);
+    };
+  }, [invalidateMapSize]);
 
   // Fetch real positions from Traccar API for selected device and date
   useEffect(() => {
@@ -108,13 +182,14 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       zoomControl: false,
     });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; CARTO &copy; OpenStreetMap',
+    const cfg = HISTORY_TILE_LAYERS[activeLayer];
+    const initialTile = L.tileLayer(cfg.url, {
+      attribution: cfg.attribution,
+      subdomains: cfg.subdomains || 'abc',
       maxZoom: 19,
-      subdomains: 'abcd',
     }).addTo(map);
 
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
+    activeTileLayerRef.current = initialTile;
     polylineLayerGroupRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
 
@@ -123,6 +198,25 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       mapRef.current = null;
     };
   }, []);
+
+  // Switch Layer Instantly
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    if (activeTileLayerRef.current) {
+      map.removeLayer(activeTileLayerRef.current);
+    }
+
+    const cfg = HISTORY_TILE_LAYERS[activeLayer];
+    const newLayer = L.tileLayer(cfg.url, {
+      attribution: cfg.attribution,
+      subdomains: cfg.subdomains || 'abc',
+      maxZoom: 19,
+    }).addTo(map);
+
+    activeTileLayerRef.current = newLayer;
+  }, [activeLayer]);
 
   // Draw Multi-Segment Polylines & Markers (Guarantees NO connecting lines across jumps!)
   useEffect(() => {
@@ -310,6 +404,23 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       mapRef.current.panTo([pt.lat, pt.lng], { animate: true });
     }
   }, [playbackIndex, displayPositions]);
+
+  // Toggle Browser Native Fullscreen Mode (Strictly handled with resize & invalidateSize)
+  const toggleFullscreen = async () => {
+    if (!containerRef.current) return;
+
+    try {
+      if (!document.fullscreenElement) {
+        await containerRef.current.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.warn('Le mode plein écran n\'est pas disponible dans ce navigateur:', err);
+    } finally {
+      invalidateMapSize();
+    }
+  };
 
   const selectedVeh = vehicles.find((v) => v.id === selectedVehicleId);
 
@@ -574,12 +685,71 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       )}
 
       {/* ============================================================ */}
-      {/* 4. MAP CONTAINER & REPLAY WORKSPACE                          */}
+      {/* 4. MAP CONTAINER & REPLAY WORKSPACE (FULLSCREEN COMPATIBLE)  */}
       {/* ============================================================ */}
-      <div className="glass-panel p-4 rounded-2xl border border-slate-800 space-y-4">
+      <div
+        ref={containerRef}
+        className={`glass-panel p-4 rounded-2xl border border-slate-800 space-y-4 relative ${
+          isFullscreen ? 'fixed inset-0 z-50 rounded-none border-0 p-4 bg-slate-950 flex flex-col' : ''
+        }`}
+      >
         {/* Leaflet Map Target */}
-        <div className="h-[480px] w-full rounded-xl overflow-hidden border border-slate-800 relative shadow-2xl">
+        <div className={`w-full rounded-xl overflow-hidden border border-slate-800 relative shadow-2xl ${
+          isFullscreen ? 'flex-1 min-h-0' : 'h-[480px]'
+        }`}>
           <div ref={mapContainerRef} className="w-full h-full" />
+
+          {/* Floating Map Controls (Top Right) */}
+          <div className="absolute top-4 right-4 z-20 flex items-center space-x-2">
+            {/* Layer Selector */}
+            <div className="relative">
+              <button
+                onClick={() => setShowLayerSelector(!showLayerSelector)}
+                className="p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-cyan-400 border border-slate-700 shadow-2xl backdrop-blur-md transition-all"
+                title="Changer le fond de carte"
+              >
+                <Layers className="w-4 h-4" />
+              </button>
+
+              {showLayerSelector && (
+                <div className="absolute right-0 mt-2 w-52 rounded-xl bg-slate-900/95 border border-slate-700 shadow-2xl p-2 z-30 space-y-1 text-xs backdrop-blur-xl animate-in fade-in">
+                  <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 py-1">
+                    Fonds Cartographiques
+                  </div>
+                  {(Object.keys(HISTORY_TILE_LAYERS) as MapTileLayerType[]).map((layerKey) => (
+                    <button
+                      key={layerKey}
+                      onClick={() => {
+                        setActiveLayer(layerKey);
+                        setShowLayerSelector(false);
+                      }}
+                      className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-between transition-colors ${
+                        activeLayer === layerKey
+                          ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40'
+                          : 'text-slate-300 hover:bg-slate-800'
+                      }`}
+                    >
+                      <span>{HISTORY_TILE_LAYERS[layerKey].name}</span>
+                      {activeLayer === layerKey && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Native Fullscreen Button */}
+            <button
+              onClick={toggleFullscreen}
+              className={`p-2.5 rounded-xl border shadow-2xl backdrop-blur-md transition-all ${
+                isFullscreen
+                  ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                  : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border-slate-700'
+              }`}
+              title={isFullscreen ? '✕ Quitter le plein écran (Échap)' : '⛶ Mode Plein Écran'}
+            >
+              {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
+            </button>
+          </div>
 
           {/* Telemetry HUD Overlay */}
           {processedData && currentPoint && (
@@ -617,7 +787,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
 
           {/* Speed Legend Overlay */}
           {processedData && displayPositions.length > 0 && (
-            <div className="absolute top-4 right-4 glass-card px-3 py-2 rounded-xl border border-slate-800 z-20 text-[10px] font-mono flex items-center space-x-3 shadow-xl">
+            <div className="absolute bottom-4 left-4 glass-card px-3 py-2 rounded-xl border border-slate-800 z-20 text-[10px] font-mono flex items-center space-x-3 shadow-xl">
               <div className="flex items-center space-x-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#06B6D4]" />
                 <span className="text-slate-300">&lt; 50 km/h</span>
@@ -652,9 +822,20 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
         {/* 5. ANIMATED REPLAY TIMELINE & CONTROLS                       */}
         {/* ============================================================ */}
         {processedData && displayPositions.length > 0 && (
-          <div className="glass-panel p-4 rounded-xl border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="glass-panel p-4 rounded-xl border border-slate-800 flex flex-col md:flex-row items-center justify-between gap-4 shrink-0">
             {/* Control Buttons */}
-            <div className="flex items-center space-x-2.5">
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={() => {
+                  setIsPlaying(false);
+                  setPlaybackIndex((prev) => Math.max(0, prev - 1));
+                }}
+                className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                title="Point précédent (⏮)"
+              >
+                <SkipBack className="w-4 h-4" />
+              </button>
+
               <button
                 onClick={() => setIsPlaying(!isPlaying)}
                 className="p-3 rounded-xl bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold transition-all shadow-lg shadow-cyan-950/50"
@@ -666,18 +847,29 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
               <button
                 onClick={() => {
                   setIsPlaying(false);
+                  setPlaybackIndex((prev) => Math.min(displayPositions.length - 1, prev + 1));
+                }}
+                className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                title="Point suivant (⏭)"
+              >
+                <SkipForward className="w-4 h-4" />
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsPlaying(false);
                   setPlaybackIndex(0);
                 }}
-                className="p-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
-                title="Revenir au point de départ"
+                className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                title="Revenir au départ (↺)"
               >
-                <RotateCcw className="w-5 h-5" />
+                <RotateCcw className="w-4 h-4" />
               </button>
 
               {/* Speed Multiplier Selector */}
               <div className="flex items-center space-x-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
                 <FastForward className="w-3.5 h-3.5 text-slate-400 ml-1.5" />
-                {[1, 2, 4, 8, 16, 32].map((mult) => (
+                {[0.5, 1, 2, 4, 8, 16].map((mult) => (
                   <button
                     key={mult}
                     onClick={() => setSpeedMultiplier(mult)}

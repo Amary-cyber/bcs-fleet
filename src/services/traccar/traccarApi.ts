@@ -77,6 +77,11 @@ export class TraccarApi {
     }
   }
 
+  // Get current active session
+  async getSession(): Promise<any> {
+    return this.request('/session');
+  }
+
   // Get all devices
   async getDevices(): Promise<TraccarDevice[]> {
     return this.request<TraccarDevice[]>('/devices');
