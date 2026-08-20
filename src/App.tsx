@@ -21,9 +21,13 @@ import { GeofencesPage } from './pages/GeofencesPage';
 import { AlertsPage } from './pages/AlertsPage';
 import { ReportsPage } from './pages/ReportsPage';
 import { UsersPage } from './pages/UsersPage';
+
 import { AuditLogPage } from './pages/AuditLogPage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AlertRulesPage } from './pages/AlertRulesPage';
+import { AlertToastContainer } from './components/layout/AlertToastContainer';
 import { Vehicle } from './types';
+
 
 const MainAppContent: React.FC = () => {
   const { isAuthenticated } = useAuth();
@@ -49,7 +53,9 @@ const MainAppContent: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden">
+    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative">
+      <AlertToastContainer onNavigateTab={handleNavigateTab} />
+
       {/* Desktop Sidebar */}
       <div className="hidden lg:block">
         <Sidebar currentTab={currentTab} onTabSelect={handleNavigateTab} />
@@ -111,6 +117,8 @@ const MainAppContent: React.FC = () => {
 
           {currentTab === 'alerts' && <AlertsPage onNavigateTab={handleNavigateTab} />}
 
+          {currentTab === 'alert-rules' && <AlertRulesPage />}
+
           {currentTab === 'reports' && <ReportsPage />}
 
           {currentTab === 'users' && <UsersPage />}
@@ -118,6 +126,7 @@ const MainAppContent: React.FC = () => {
           {currentTab === 'audit' && <AuditLogPage />}
 
           {currentTab === 'settings' && <SettingsPage />}
+
         </main>
       </div>
 

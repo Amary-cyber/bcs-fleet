@@ -5,16 +5,16 @@ import { Car, Activity, Clock, Radio, AlertTriangle, CheckCircle2 } from 'lucide
 interface BottomKpiBarProps {
   vehicles: Vehicle[];
   alerts: Alert[];
+  onNavigateTab?: (tabId: string) => void;
 }
 
-export const BottomKpiBar: React.FC<BottomKpiBarProps> = ({ vehicles, alerts }) => {
-  // 100% Dynamic calculations from active vehicle array
+export const BottomKpiBar: React.FC<BottomKpiBarProps> = ({ vehicles, alerts, onNavigateTab }) => {
   const totalCount = vehicles.length;
   const movingCount = vehicles.filter((v) => v.status === 'MOVING').length;
   const stoppedCount = vehicles.filter((v) => v.status === 'STOPPED').length;
   const offlineCount = vehicles.filter((v) => v.status === 'OFFLINE' || v.comm_status === 'OFFLINE').length;
   const onlineCount = totalCount - offlineCount;
-  const alertCount = vehicles.filter((v) => v.status === 'ALERT').length;
+  const unreadAlertsCount = alerts.filter((a) => !a.is_read).length;
 
   return (
     <footer className="h-12 bg-slate-900/95 border-t border-slate-800 px-4 flex items-center justify-between shadow-2xl text-xs font-mono shrink-0 select-none">
@@ -65,10 +65,13 @@ export const BottomKpiBar: React.FC<BottomKpiBarProps> = ({ vehicles, alerts }) 
         <span className="text-slate-800">|</span>
 
         {/* Alerts */}
-        <div className="flex items-center space-x-1.5 text-rose-400">
+        <div
+          onClick={() => onNavigateTab && onNavigateTab('alerts')}
+          className="flex items-center space-x-1.5 text-rose-400 cursor-pointer hover:underline"
+        >
           <AlertTriangle className="w-4 h-4 animate-bounce" />
           <span className="text-slate-400 font-sans">ALERTES:</span>
-          <span className="font-bold text-rose-400 text-sm">{alertCount}</span>
+          <span className="font-bold text-rose-400 text-sm">{unreadAlertsCount}</span>
         </div>
       </div>
 

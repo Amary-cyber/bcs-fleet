@@ -13,9 +13,11 @@ import {
   FileSpreadsheet,
   UserCheck,
   ClipboardList,
+  SlidersHorizontal,
   Settings,
   Flame,
 } from 'lucide-react';
+
 
 export interface NavItem {
   id: string;
@@ -47,11 +49,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabSelect }) => 
     { id: 'history', label: 'Historique', icon: History },
     { id: 'geofences', label: 'Géofences', icon: CircleDot },
     { id: 'alerts', label: 'Alertes', icon: BellRing, badge: unreadAlerts > 0 ? unreadAlerts : undefined, badgeColor: 'bg-rose-500 text-white animate-pulse' },
+    { id: 'alert-rules', label: 'Règles d\'Alertes', icon: SlidersHorizontal, allowedRoles: ['ADMIN', 'MANAGER'] },
     { id: 'reports', label: 'Rapports', icon: FileSpreadsheet },
     { id: 'users', label: 'Utilisateurs & Accès', icon: UserCheck, allowedRoles: ['ADMIN', 'MANAGER'] },
     { id: 'audit', label: 'Journal d\'Activité', icon: ClipboardList, allowedRoles: ['ADMIN', 'MANAGER'] },
     { id: 'settings', label: 'Paramètres', icon: Settings },
   ];
+
 
   const filteredNavItems = navItems.filter(
     (item) => !item.allowedRoles || item.allowedRoles.includes(role)

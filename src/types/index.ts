@@ -88,13 +88,18 @@ export type GeofenceType = 'CIRCLE' | 'POLYGON';
 export interface Geofence {
   id: string;
   name: string;
+  description?: string;
   category: string;
   type: GeofenceType;
   coordinates: [number, number][] | { center: [number, number]; radius: number };
   color: string;
   speed_limit?: number;
+  active?: boolean;
   notify_on_enter: boolean;
   notify_on_exit: boolean;
+  assigned_vehicle_ids?: string[];
+  created_at?: string;
+  updated_at?: string;
 }
 
 export type AlertType =
@@ -104,7 +109,10 @@ export type AlertType =
   | 'PROLONGED_STOP'
   | 'GPS_OFFLINE'
   | 'UNAUTHORIZED_MOVEMENT'
-  | 'LOW_BATTERY';
+  | 'LOW_BATTERY'
+  | 'IGNITION'
+  | 'SOS'
+  | 'TRACKER_ERROR';
 
 export type AlertSeverity = 'CRITICAL' | 'WARNING' | 'INFO';
 
@@ -113,17 +121,40 @@ export interface Alert {
   vehicle_id: string;
   vehicle_name: string;
   vehicle_plate: string;
+  traccar_device_id?: number;
   alert_type: AlertType;
   severity: AlertSeverity;
+  title?: string;
   message: string;
   speed?: number;
   speed_limit?: number;
   lat: number;
   lng: number;
   geofence_id?: string;
+  geofence_name?: string;
   is_read: boolean;
+  acknowledged?: boolean;
+  acknowledged_by?: string;
+  acknowledged_at?: string;
   timestamp: string;
+  created_at?: string;
 }
+
+export interface AlertRuleConfig {
+  speed_limit_kmh: number;
+  speed_tolerance_kmh: number;
+  offline_threshold_mins: number;
+  long_stop_threshold_mins: number;
+  low_battery_threshold: number;
+  notify_speeding: boolean;
+  notify_geofence: boolean;
+  notify_offline: boolean;
+  notify_long_stop: boolean;
+  notify_low_battery: boolean;
+  notify_sos: boolean;
+  notify_ignition: boolean;
+}
+
 
 export interface RoutePoint {
   lat: number;
@@ -193,6 +224,7 @@ export interface TraccarPosition {
   address?: string;
   attributes: {
     batteryLevel?: number;
+    battery?: number;
     fuelLevel?: number;
     fuel?: number;
     ignition?: boolean;
@@ -204,7 +236,6 @@ export interface TraccarPosition {
     temp?: number;
     hours?: number;
   };
-
 }
 
 export interface TraccarDevice {
@@ -216,3 +247,10 @@ export interface TraccarDevice {
   positionId: number;
   disabled: boolean;
 }
+
+export interface WebSocketMessageData {
+  devices?: TraccarDevice[];
+  positions?: TraccarPosition[];
+  events?: any[];
+}
+

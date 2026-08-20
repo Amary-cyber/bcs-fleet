@@ -96,6 +96,13 @@ export class TraccarApi {
       return false;
     }
   }
+
+
+  async sendCommand(deviceId: number, type: 'engineStop' | 'engineResume'): Promise<boolean> {
+    return this.sendEngineCommand(deviceId, type);
+  }
 }
+
+
 
 export const traccarApi = new TraccarApi();

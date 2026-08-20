@@ -5,7 +5,9 @@ export type WebSocketStatus = 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED' | 'ERR
 export interface WebSocketMessageData {
   devices?: TraccarDevice[];
   positions?: TraccarPosition[];
+  events?: any[];
 }
+
 
 export class TraccarWebSocket {
   private ws: WebSocket | null = null;
