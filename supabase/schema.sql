@@ -180,12 +180,115 @@ CREATE TABLE IF NOT EXISTS public.settings (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 12. ORGANIZATIONS TABLE (MULTI-TENANT ISOLATION)
+CREATE TABLE IF NOT EXISTS public.organizations (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    currency TEXT DEFAULT 'FCFA',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 13. MAINTENANCE TYPES & TABLES
+CREATE TYPE maintenance_type AS ENUM ('OIL_CHANGE', 'INSPECTION', 'TIRES', 'BRAKES', 'BATTERY', 'REPAIR', 'TECHNICAL_INSPECTION', 'INSURANCE', 'OTHER');
+CREATE TYPE maintenance_status AS ENUM ('SCHEDULED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED');
+CREATE TYPE maintenance_priority AS ENUM ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL');
+CREATE TYPE document_type AS ENUM ('ASSURANCE', 'VISITE_TECHNIQUE', 'CARTE_GRISE', 'VIGNETTE', 'EXTINCTEUR', 'AUTRE');
+CREATE TYPE expense_category AS ENUM ('CARBURANT', 'MAINTENANCE', 'REPARATION', 'PNEUS', 'PEAGE', 'ASSURANCE', 'AMENDES', 'AUTRE');
+
+-- 14. MAINTENANCE RECORDS TABLE
+CREATE TABLE IF NOT EXISTS public.maintenance_records (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    vehicle_id UUID NOT NULL REFERENCES public.vehicles(id) ON DELETE CASCADE,
+    type maintenance_type NOT NULL DEFAULT 'OIL_CHANGE',
+    title TEXT NOT NULL,
+    description TEXT,
+    status maintenance_status NOT NULL DEFAULT 'SCHEDULED',
+    priority maintenance_priority NOT NULL DEFAULT 'MEDIUM',
+    provider TEXT NOT NULL, -- e.g. 'BCS Repair Dakar', 'Total Auto Point E'
+    cost DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+    currency TEXT NOT NULL DEFAULT 'FCFA',
+    odometer DOUBLE PRECISION,
+    engine_hours DOUBLE PRECISION,
+    scheduled_date DATE NOT NULL,
+    completed_date DATE,
+    next_due_date DATE,
+    next_due_odometer DOUBLE PRECISION,
+    next_due_engine_hours DOUBLE PRECISION,
+    invoice_number TEXT,
+    notes TEXT,
+    receipt_url TEXT,
+    created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 15. MAINTENANCE SCHEDULES (PREVENTIVE RULES) TABLE
+CREATE TABLE IF NOT EXISTS public.maintenance_schedules (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    vehicle_id UUID NOT NULL REFERENCES public.vehicles(id) ON DELETE CASCADE,
+    type maintenance_type NOT NULL DEFAULT 'OIL_CHANGE',
+    title TEXT NOT NULL,
+    interval_km INT, -- e.g. 10000 km
+    interval_months INT, -- e.g. 6 months
+    interval_engine_hours INT, -- e.g. 500 hours
+    last_performed_date DATE,
+    last_performed_odometer DOUBLE PRECISION,
+    last_performed_engine_hours DOUBLE PRECISION,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 16. VEHICLE DOCUMENTS & VISITES TECHNIQUES & ASSURANCES
+CREATE TABLE IF NOT EXISTS public.vehicle_documents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    vehicle_id UUID NOT NULL REFERENCES public.vehicles(id) ON DELETE CASCADE,
+    type document_type NOT NULL DEFAULT 'VISITE_TECHNIQUE',
+    title TEXT NOT NULL,
+    document_number TEXT NOT NULL,
+    provider_or_center TEXT NOT NULL, -- e.g. 'CTTD Hann Maristes', 'AXA Assurances Dakar'
+    cost DOUBLE PRECISION DEFAULT 0.0,
+    issue_date DATE NOT NULL,
+    expiry_date DATE NOT NULL,
+    file_url TEXT,
+    notes TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 17. EXPENSES LEDGER (JOURNAL DES DÉPENSES)
+CREATE TABLE IF NOT EXISTS public.expenses (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID REFERENCES public.organizations(id) ON DELETE CASCADE,
+    vehicle_id UUID NOT NULL REFERENCES public.vehicles(id) ON DELETE CASCADE,
+    driver_id UUID REFERENCES public.drivers(id) ON DELETE SET NULL,
+    category expense_category NOT NULL DEFAULT 'CARBURANT',
+    amount DOUBLE PRECISION NOT NULL,
+    currency TEXT NOT NULL DEFAULT 'FCFA',
+    date DATE NOT NULL DEFAULT CURRENT_DATE,
+    supplier TEXT NOT NULL, -- e.g. 'Station Total Hann', 'Péage Dakar-Diamniadio'
+    liters DOUBLE PRECISION,
+    price_per_liter DOUBLE PRECISION,
+    odometer_at_expense DOUBLE PRECISION,
+    description TEXT,
+    receipt_url TEXT,
+    created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- INDEXES FOR FAST RECOVERY
 CREATE INDEX IF NOT EXISTS idx_vehicles_driver ON public.vehicles(driver_id);
 CREATE INDEX IF NOT EXISTS idx_vehicles_device ON public.vehicles(device_id);
 CREATE INDEX IF NOT EXISTS idx_trips_vehicle_date ON public.trips(vehicle_id, start_time);
 CREATE INDEX IF NOT EXISTS idx_alerts_vehicle_time ON public.alerts(vehicle_id, timestamp);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON public.audit_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_maint_vehicle ON public.maintenance_records(vehicle_id, scheduled_date);
+CREATE INDEX IF NOT EXISTS idx_maint_sched_vehicle ON public.maintenance_schedules(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_docs_vehicle_expiry ON public.vehicle_documents(vehicle_id, expiry_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_vehicle_date ON public.expenses(vehicle_id, date);
 
 -- ROW LEVEL SECURITY (RLS)
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -198,8 +301,12 @@ ALTER TABLE public.alerts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.maintenance_records ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.maintenance_schedules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.vehicle_documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.expenses ENABLE ROW LEVEL SECURITY;
 
--- POLICIES FOR ENTERPRISE SINGLE-TENANT (Authenticated Users can read; Admins/Managers can write)
+-- POLICIES FOR ENTERPRISE (Authenticated Users can read; Admins/Managers can write)
 CREATE POLICY "Profiles are viewable by authenticated users" ON public.profiles FOR SELECT USING (auth.role() = 'authenticated');
 CREATE POLICY "Admins can update profiles" ON public.profiles FOR ALL USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'ADMIN')
@@ -235,7 +342,29 @@ CREATE POLICY "Settings editable by Admin" ON public.settings FOR UPDATE USING (
   EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'ADMIN')
 );
 
+-- MAINTENANCE & EXPENSES POLICIES
+CREATE POLICY "Maintenance records viewable by authenticated users" ON public.maintenance_records FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Admins and Managers can manage maintenance records" ON public.maintenance_records FOR ALL USING (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('ADMIN', 'MANAGER'))
+);
+
+CREATE POLICY "Maintenance schedules viewable by authenticated users" ON public.maintenance_schedules FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Admins and Managers can manage maintenance schedules" ON public.maintenance_schedules FOR ALL USING (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('ADMIN', 'MANAGER'))
+);
+
+CREATE POLICY "Vehicle documents viewable by authenticated users" ON public.vehicle_documents FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Admins and Managers can manage vehicle documents" ON public.vehicle_documents FOR ALL USING (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('ADMIN', 'MANAGER'))
+);
+
+CREATE POLICY "Expenses viewable by authenticated users" ON public.expenses FOR SELECT USING (auth.role() = 'authenticated');
+CREATE POLICY "Admins and Managers can manage expenses" ON public.expenses FOR ALL USING (
+  EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role IN ('ADMIN', 'MANAGER'))
+);
+
 -- INITIAL SEED DATA FOR SETTINGS
 INSERT INTO public.settings (id, company_name, company_phone, company_email, company_address)
 VALUES (1, 'BCS Fleet Dakar', '+221 33 800 00 00', 'contact@bcsfleet.sn', 'Route de la Corniche Ouest, Dakar, Sénégal')
 ON CONFLICT (id) DO NOTHING;
+

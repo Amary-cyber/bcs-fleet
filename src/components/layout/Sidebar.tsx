@@ -16,6 +16,8 @@ import {
   SlidersHorizontal,
   Settings,
   Flame,
+  Wrench,
+  Wallet,
 } from 'lucide-react';
 
 
@@ -34,17 +36,22 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onTabSelect }) => {
-  const { alerts, vehicles, drivers } = useFleet();
+  const { alerts, vehicles, drivers, maintenanceRecords } = useFleet();
   const { role } = useAuth();
 
   const unreadAlerts = alerts.filter((a) => !a.is_read).length;
   const movingVehicles = vehicles.filter((v) => v.status === 'MOVING').length;
+  const scheduledMaintenance = maintenanceRecords.filter(
+    (r) => r.status === 'SCHEDULED' || r.status === 'IN_PROGRESS'
+  ).length;
 
   const navItems: NavItem[] = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'tracking', label: 'Live Tracking', icon: MapPin, badge: `${movingVehicles}/${vehicles.length}`, badgeColor: 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' },
     { id: 'vehicles', label: 'Véhicules', icon: Car, badge: vehicles.length },
     { id: 'drivers', label: 'Chauffeurs', icon: Users, badge: drivers.length },
+    { id: 'maintenance', label: 'Maintenance & Visites', icon: Wrench, badge: scheduledMaintenance > 0 ? scheduledMaintenance : undefined, badgeColor: 'bg-amber-500 text-slate-950 font-bold' },
+    { id: 'expenses', label: 'Dépenses & TCO', icon: Wallet },
     { id: 'devices', label: 'Traceurs GPS', icon: Radio, allowedRoles: ['ADMIN', 'MANAGER'] },
     { id: 'history', label: 'Historique', icon: History },
     { id: 'geofences', label: 'Géofences', icon: CircleDot },

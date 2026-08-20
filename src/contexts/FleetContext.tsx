@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useMemo } from 'react';
 import {
   Vehicle,
   Driver,
@@ -10,6 +10,12 @@ import {
   TraccarPosition,
   TraccarDevice,
   AlertRuleConfig,
+  MaintenanceRecord,
+  MaintenanceSchedule,
+  VehicleDocument,
+  Expense,
+  TCOSummary,
+  ExpenseCategory,
 } from '../types';
 import { useTraccar } from './TraccarContext';
 import { useAuth } from './AuthContext';
@@ -21,6 +27,10 @@ import {
   DEMO_DRIVERS,
   DEMO_DEVICES,
   INITIAL_DEMO_VEHICLES,
+  DEMO_MAINTENANCE_RECORDS,
+  DEMO_MAINTENANCE_SCHEDULES,
+  DEMO_VEHICLE_DOCUMENTS,
+  DEMO_EXPENSES,
 } from '../services/demo/demoSimulator';
 
 interface FleetContextType {
@@ -32,6 +42,11 @@ interface FleetContextType {
   auditLogs: AuditLog[];
   settings: CompanySettings;
   alertRules: AlertRuleConfig;
+  maintenanceRecords: MaintenanceRecord[];
+  maintenanceSchedules: MaintenanceSchedule[];
+  vehicleDocuments: VehicleDocument[];
+  expenses: Expense[];
+  tcoSummary: TCOSummary;
   selectedVehicle: Vehicle | null;
   toastNotification: Alert | null;
   clearToast: () => void;
@@ -55,6 +70,20 @@ interface FleetContextType {
   toggleEngineImmobilizer: (vehicleId: string, lock: boolean) => Promise<boolean>;
   logAuditAction: (action: string, details?: Record<string, any>) => void;
   updateSettings: (newSettings: Partial<CompanySettings>) => void;
+
+  // Maintenance & Expenses CRUD
+  addMaintenanceRecord: (record: Partial<MaintenanceRecord>) => void;
+  updateMaintenanceRecord: (id: string, updates: Partial<MaintenanceRecord>) => void;
+  deleteMaintenanceRecord: (id: string) => void;
+  addMaintenanceSchedule: (schedule: Partial<MaintenanceSchedule>) => void;
+  updateMaintenanceSchedule: (id: string, updates: Partial<MaintenanceSchedule>) => void;
+  deleteMaintenanceSchedule: (id: string) => void;
+  addVehicleDocument: (doc: Partial<VehicleDocument>) => void;
+  updateVehicleDocument: (id: string, updates: Partial<VehicleDocument>) => void;
+  deleteVehicleDocument: (id: string) => void;
+  addExpense: (expense: Partial<Expense>) => void;
+  updateExpense: (id: string, updates: Partial<Expense>) => void;
+  deleteExpense: (id: string) => void;
 }
 
 const DEFAULT_SETTINGS: CompanySettings = {
@@ -127,6 +156,12 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [settings, setSettings] = useState<CompanySettings>(DEFAULT_SETTINGS);
   const [selectedVehicle, setSelectedVehicle] = useState<Vehicle | null>(null);
 
+  // Maintenance & Expenses State
+  const [maintenanceRecords, setMaintenanceRecords] = useState<MaintenanceRecord[]>(DEMO_MAINTENANCE_RECORDS);
+  const [maintenanceSchedules, setMaintenanceSchedules] = useState<MaintenanceSchedule[]>(DEMO_MAINTENANCE_SCHEDULES);
+  const [vehicleDocuments, setVehicleDocuments] = useState<VehicleDocument[]>(DEMO_VEHICLE_DOCUMENTS);
+  const [expenses, setExpenses] = useState<Expense[]>(DEMO_EXPENSES);
+
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([
     {
       id: 'log-1',
@@ -143,6 +178,7 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const geofenceStateRef = useRef<Record<string, Record<string, 'INSIDE' | 'OUTSIDE'>>>({});
   const lowBatteryStateRef = useRef<Record<string, boolean>>({});
   const processedEventIdsRef = useRef<Set<string>>(new Set());
+  const maintenanceAlertsRef = useRef<Set<string>>(new Set());
 
   const clearToast = () => setToastNotification(null);
 
@@ -596,6 +632,402 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     logAuditAction('GEOFENCE_DELETE', { geofence_id: id });
   };
 
+  // Maintenance, Documents & Driver Licenses Deadline Check Engine
+  useEffect(() => {
+    const checkDeadlines = () => {
+      const now = Date.now();
+
+      // 1. Check Maintenance Schedules against real Odometer & Time
+      maintenanceSchedules.forEach((sched) => {
+        if (!sched.active) return;
+        const veh = vehicles.find((v) => v.id === sched.vehicle_id);
+        if (!veh) return;
+
+        // Odometer-based check
+        if (sched.interval_km && veh.odometer_km) {
+          const lastKm = sched.last_performed_odometer || 0;
+          const dueKm = lastKm + sched.interval_km;
+          const kmRemaining = dueKm - veh.odometer_km;
+          const alertKey = `sched-km-${sched.id}-${Math.floor(veh.odometer_km / 500)}`;
+
+          if (kmRemaining <= 0 && !maintenanceAlertsRef.current.has(alertKey)) {
+            maintenanceAlertsRef.current.add(alertKey);
+            createAlert({
+              vehicle_id: veh.id,
+              vehicle_name: veh.name,
+              vehicle_plate: veh.plate_number,
+              traccar_device_id: veh.traccar_id,
+              alert_type: 'MAINTENANCE_OVERDUE',
+              severity: 'CRITICAL',
+              title: `🛠️ ENTRETIEN EN RETARD: ${sched.title}`,
+              message: `Le véhicule ${veh.name} (${veh.plate_number}) a dépassé l'échéance de ${Math.abs(kmRemaining)} km (Odomètre: ${veh.odometer_km} km / Prévu: ${dueKm} km).`,
+              lat: veh.current_lat,
+              lng: veh.current_lng,
+            });
+          } else if (kmRemaining > 0 && kmRemaining <= 1000 && !maintenanceAlertsRef.current.has(alertKey)) {
+            maintenanceAlertsRef.current.add(alertKey);
+            createAlert({
+              vehicle_id: veh.id,
+              vehicle_name: veh.name,
+              vehicle_plate: veh.plate_number,
+              traccar_device_id: veh.traccar_id,
+              alert_type: 'MAINTENANCE_DUE',
+              severity: 'WARNING',
+              title: `⚠️ ENTRETIEN À PRÉVOIR: ${sched.title}`,
+              message: `Échéance dans ${kmRemaining} km pour ${veh.name} (Odomètre: ${veh.odometer_km} km / Prévu à ${dueKm} km).`,
+              lat: veh.current_lat,
+              lng: veh.current_lng,
+            });
+          }
+        }
+      });
+
+      // 2. Check Vehicle Documents (Assurance, Visite Technique, etc.) Expiration
+      vehicleDocuments.forEach((doc) => {
+        const expiryTime = new Date(doc.expiry_date).getTime();
+        const daysRemaining = Math.ceil((expiryTime - now) / (1000 * 3600 * 24));
+        const alertKey = `doc-exp-${doc.id}-${daysRemaining}`;
+
+        if (daysRemaining <= 30 && !maintenanceAlertsRef.current.has(alertKey)) {
+          maintenanceAlertsRef.current.add(alertKey);
+          const isOverdue = daysRemaining < 0;
+          const isAssurance = doc.type === 'ASSURANCE';
+          const isVT = doc.type === 'VISITE_TECHNIQUE';
+
+          const alertType = isAssurance
+            ? 'INSURANCE_EXPIRING'
+            : isVT
+            ? 'TECHNICAL_INSPECTION_EXPIRING'
+            : 'DOCUMENT_EXPIRING';
+
+          createAlert({
+            vehicle_id: doc.vehicle_id,
+            vehicle_name: doc.vehicle_name,
+            vehicle_plate: doc.vehicle_plate,
+            alert_type: alertType,
+            severity: isOverdue ? 'CRITICAL' : daysRemaining <= 7 ? 'WARNING' : 'INFO',
+            title: isOverdue
+              ? `🚨 ${doc.title} EXPIRÉ(E)`
+              : `⏳ ÉCHÉANCE: ${doc.title}`,
+            message: isOverdue
+              ? `Le document ${doc.document_number} pour ${doc.vehicle_name} est expiré depuis ${Math.abs(daysRemaining)} jour(s).`
+              : `Le document ${doc.document_number} pour ${doc.vehicle_name} expire dans ${daysRemaining} jour(s) (${doc.expiry_date}).`,
+            lat: 14.6937,
+            lng: -17.4583,
+          });
+        }
+      });
+
+      // 3. Check Driver Licenses Expiration
+      drivers.forEach((drv) => {
+        if (!drv.license_expiry_date) return;
+        const expiryTime = new Date(drv.license_expiry_date).getTime();
+        const daysRemaining = Math.ceil((expiryTime - now) / (1000 * 3600 * 24));
+        const alertKey = `lic-exp-${drv.id}-${daysRemaining}`;
+
+        if (daysRemaining <= 30 && !maintenanceAlertsRef.current.has(alertKey)) {
+          maintenanceAlertsRef.current.add(alertKey);
+          const isOverdue = daysRemaining < 0;
+
+          createAlert({
+            vehicle_id: drv.assigned_vehicle_id || 'unassigned',
+            vehicle_name: drv.assigned_vehicle_name || 'Chauffeur',
+            vehicle_plate: drv.license_number,
+            alert_type: 'LICENSE_EXPIRING',
+            severity: isOverdue ? 'CRITICAL' : daysRemaining <= 7 ? 'WARNING' : 'INFO',
+            title: isOverdue
+              ? `🪪 PERMIS DE CONDUIRE EXPIRÉ`
+              : `🪪 PERMIS CHAUFFEUR: ÉCHÉANCE PROCHE`,
+            message: isOverdue
+              ? `Le permis de ${drv.first_name} ${drv.last_name} (${drv.license_number}) est expiré.`
+              : `Le permis de ${drv.first_name} ${drv.last_name} (${drv.license_number}) expire dans ${daysRemaining} jour(s).`,
+            lat: 14.6937,
+            lng: -17.4583,
+          });
+        }
+      });
+    };
+
+    checkDeadlines();
+    const interval = setInterval(checkDeadlines, 60000); // Check every minute
+    return () => clearInterval(interval);
+  }, [vehicles, maintenanceSchedules, vehicleDocuments, drivers]);
+
+  // Dynamic TCO (Total Cost of Ownership) Calculation
+  const tcoSummary: TCOSummary = useMemo(() => {
+    const totalCost = expenses.reduce((sum, exp) => sum + exp.amount, 0);
+    const totalDistanceKm = vehicles.reduce((sum, v) => sum + (v.odometer_km || 0), 0);
+    const costPerKm = totalDistanceKm > 0 ? Math.round((totalCost / totalDistanceKm) * 10) / 10 : null;
+
+    const costByCategory: Record<ExpenseCategory, number> = {
+      CARBURANT: 0,
+      MAINTENANCE: 0,
+      REPARATION: 0,
+      PNEUS: 0,
+      PEAGE: 0,
+      ASSURANCE: 0,
+      AMENDES: 0,
+      AUTRE: 0,
+    };
+
+    const costByVehicle: Record<string, { name: string; plate: string; total: number; km: number; costPerKm: number | null }> = {};
+
+    vehicles.forEach((v) => {
+      costByVehicle[v.id] = {
+        name: v.name,
+        plate: v.plate_number,
+        total: 0,
+        km: v.odometer_km || 0,
+        costPerKm: null,
+      };
+    });
+
+    const monthMap = new Map<string, { total: number; fuel: number; maintenance: number; other: number }>();
+
+    expenses.forEach((exp) => {
+      // By category
+      costByCategory[exp.category] = (costByCategory[exp.category] || 0) + exp.amount;
+
+      // By vehicle
+      if (!costByVehicle[exp.vehicle_id]) {
+        costByVehicle[exp.vehicle_id] = {
+          name: exp.vehicle_name,
+          plate: exp.vehicle_plate,
+          total: 0,
+          km: 0,
+          costPerKm: null,
+        };
+      }
+      costByVehicle[exp.vehicle_id].total += exp.amount;
+
+      // Monthly timeline
+      const monthKey = exp.date ? exp.date.substring(0, 7) : '2026-08';
+      const mData = monthMap.get(monthKey) || { total: 0, fuel: 0, maintenance: 0, other: 0 };
+      mData.total += exp.amount;
+      if (exp.category === 'CARBURANT') {
+        mData.fuel += exp.amount;
+      } else if (exp.category === 'MAINTENANCE' || exp.category === 'REPARATION' || exp.category === 'PNEUS') {
+        mData.maintenance += exp.amount;
+      } else {
+        mData.other += exp.amount;
+      }
+      monthMap.set(monthKey, mData);
+    });
+
+    // Compute cost per km for vehicles with reliable odometer
+    Object.keys(costByVehicle).forEach((vid) => {
+      const vData = costByVehicle[vid];
+      if (vData.km > 0) {
+        vData.costPerKm = Math.round((vData.total / vData.km) * 10) / 10;
+      }
+    });
+
+    const monthlyTimeline = Array.from(monthMap.entries())
+      .map(([month, data]) => ({ month, ...data }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+
+    return {
+      totalCost,
+      totalDistanceKm,
+      costPerKm,
+      costByCategory,
+      costByVehicle,
+      monthlyTimeline,
+    };
+  }, [expenses, vehicles]);
+
+  // Maintenance & Expenses CRUD Handlers
+  const addMaintenanceRecord = (recordData: Partial<MaintenanceRecord>) => {
+    const veh = vehicles.find((v) => v.id === recordData.vehicle_id);
+    const created: MaintenanceRecord = {
+      id: `maint-${Date.now()}`,
+      organization_id: 'org-bcs-dakar',
+      vehicle_id: recordData.vehicle_id || (vehicles[0]?.id ?? 'veh-1'),
+      vehicle_name: veh?.name || recordData.vehicle_name || 'Véhicule',
+      vehicle_plate: veh?.plate_number || recordData.vehicle_plate || 'DK-0000-XX',
+      type: recordData.type || 'OIL_CHANGE',
+      title: recordData.title || 'Entretien Véhicule',
+      description: recordData.description,
+      status: recordData.status || 'SCHEDULED',
+      priority: recordData.priority || 'MEDIUM',
+      provider: recordData.provider || 'BCS Repair Dakar',
+      cost: recordData.cost || 0,
+      currency: 'FCFA',
+      odometer: recordData.odometer ?? veh?.odometer_km,
+      engine_hours: recordData.engine_hours ?? veh?.engine_hours,
+      scheduled_date: recordData.scheduled_date || new Date().toISOString().split('T')[0],
+      completed_date: recordData.completed_date,
+      next_due_date: recordData.next_due_date,
+      next_due_odometer: recordData.next_due_odometer,
+      next_due_engine_hours: recordData.next_due_engine_hours,
+      invoice_number: recordData.invoice_number,
+      notes: recordData.notes,
+      receipt_url: recordData.receipt_url,
+      created_by: user?.id,
+      created_at: new Date().toISOString(),
+    };
+
+    setMaintenanceRecords((prev) => [created, ...prev]);
+
+    // If cost > 0, automatically log corresponding expense in the ledger
+    if (created.cost > 0) {
+      addExpense({
+        vehicle_id: created.vehicle_id,
+        vehicle_name: created.vehicle_name,
+        vehicle_plate: created.vehicle_plate,
+        category: 'MAINTENANCE',
+        amount: created.cost,
+        currency: created.currency,
+        date: created.completed_date || created.scheduled_date,
+        supplier: created.provider,
+        description: `${created.title} (${created.invoice_number || 'Entretien'})`,
+      });
+    }
+
+    logAuditAction('MAINTENANCE_RECORD_CREATE', { title: created.title, vehicle: created.vehicle_plate, cost: created.cost });
+  };
+
+  const updateMaintenanceRecord = (id: string, updates: Partial<MaintenanceRecord>) => {
+    setMaintenanceRecords((prev) =>
+      prev.map((m) => (m.id === id ? { ...m, ...updates, updated_at: new Date().toISOString() } : m))
+    );
+    logAuditAction('MAINTENANCE_RECORD_UPDATE', { id, updates });
+  };
+
+  const deleteMaintenanceRecord = (id: string) => {
+    setMaintenanceRecords((prev) => prev.filter((m) => m.id !== id));
+    logAuditAction('MAINTENANCE_RECORD_DELETE', { id });
+  };
+
+  const addMaintenanceSchedule = (scheduleData: Partial<MaintenanceSchedule>) => {
+    const veh = vehicles.find((v) => v.id === scheduleData.vehicle_id);
+    const created: MaintenanceSchedule = {
+      id: `sched-${Date.now()}`,
+      organization_id: 'org-bcs-dakar',
+      vehicle_id: scheduleData.vehicle_id || (vehicles[0]?.id ?? 'veh-1'),
+      vehicle_name: veh?.name || scheduleData.vehicle_name || 'Véhicule',
+      vehicle_plate: veh?.plate_number || scheduleData.vehicle_plate || 'DK-0000-XX',
+      type: scheduleData.type || 'OIL_CHANGE',
+      title: scheduleData.title || 'Règle d\'entretien',
+      interval_km: scheduleData.interval_km,
+      interval_months: scheduleData.interval_months,
+      interval_engine_hours: scheduleData.interval_engine_hours,
+      last_performed_date: scheduleData.last_performed_date,
+      last_performed_odometer: scheduleData.last_performed_odometer ?? veh?.odometer_km,
+      last_performed_engine_hours: scheduleData.last_performed_engine_hours ?? veh?.engine_hours,
+      active: scheduleData.active ?? true,
+      notes: scheduleData.notes,
+      created_at: new Date().toISOString(),
+    };
+
+    setMaintenanceSchedules((prev) => [created, ...prev]);
+    logAuditAction('MAINTENANCE_SCHEDULE_CREATE', { title: created.title, vehicle: created.vehicle_plate });
+  };
+
+  const updateMaintenanceSchedule = (id: string, updates: Partial<MaintenanceSchedule>) => {
+    setMaintenanceSchedules((prev) =>
+      prev.map((s) => (s.id === id ? { ...s, ...updates } : s))
+    );
+    logAuditAction('MAINTENANCE_SCHEDULE_UPDATE', { id, updates });
+  };
+
+  const deleteMaintenanceSchedule = (id: string) => {
+    setMaintenanceSchedules((prev) => prev.filter((s) => s.id !== id));
+    logAuditAction('MAINTENANCE_SCHEDULE_DELETE', { id });
+  };
+
+  const addVehicleDocument = (docData: Partial<VehicleDocument>) => {
+    const veh = vehicles.find((v) => v.id === docData.vehicle_id);
+    const created: VehicleDocument = {
+      id: `doc-${Date.now()}`,
+      organization_id: 'org-bcs-dakar',
+      vehicle_id: docData.vehicle_id || (vehicles[0]?.id ?? 'veh-1'),
+      vehicle_name: veh?.name || docData.vehicle_name || 'Véhicule',
+      vehicle_plate: veh?.plate_number || docData.vehicle_plate || 'DK-0000-XX',
+      type: docData.type || 'VISITE_TECHNIQUE',
+      title: docData.title || 'Document Véhicule',
+      document_number: docData.document_number || `DOC-${Math.floor(Math.random() * 100000)}`,
+      provider_or_center: docData.provider_or_center || 'Centre Dakar',
+      cost: docData.cost || 0,
+      issue_date: docData.issue_date || new Date().toISOString().split('T')[0],
+      expiry_date: docData.expiry_date || new Date(Date.now() + 365 * 24 * 3600 * 1000).toISOString().split('T')[0],
+      file_url: docData.file_url,
+      notes: docData.notes,
+      created_at: new Date().toISOString(),
+    };
+
+    setVehicleDocuments((prev) => [created, ...prev]);
+
+    if (created.cost && created.cost > 0) {
+      addExpense({
+        vehicle_id: created.vehicle_id,
+        vehicle_name: created.vehicle_name,
+        vehicle_plate: created.vehicle_plate,
+        category: created.type === 'ASSURANCE' ? 'ASSURANCE' : 'AUTRE',
+        amount: created.cost,
+        currency: 'FCFA',
+        date: created.issue_date,
+        supplier: created.provider_or_center,
+        description: `${created.title} (${created.document_number})`,
+      });
+    }
+
+    logAuditAction('VEHICLE_DOCUMENT_CREATE', { title: created.title, doc_number: created.document_number });
+  };
+
+  const updateVehicleDocument = (id: string, updates: Partial<VehicleDocument>) => {
+    setVehicleDocuments((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, ...updates } : d))
+    );
+    logAuditAction('VEHICLE_DOCUMENT_UPDATE', { id, updates });
+  };
+
+  const deleteVehicleDocument = (id: string) => {
+    setVehicleDocuments((prev) => prev.filter((d) => d.id !== id));
+    logAuditAction('VEHICLE_DOCUMENT_DELETE', { id });
+  };
+
+  const addExpense = (expData: Partial<Expense>) => {
+    const veh = vehicles.find((v) => v.id === expData.vehicle_id);
+    const drv = drivers.find((d) => d.id === expData.driver_id || d.assigned_vehicle_id === expData.vehicle_id);
+    const created: Expense = {
+      id: `exp-${Date.now()}`,
+      organization_id: 'org-bcs-dakar',
+      vehicle_id: expData.vehicle_id || (vehicles[0]?.id ?? 'veh-1'),
+      vehicle_name: veh?.name || expData.vehicle_name || 'Véhicule Flotte',
+      vehicle_plate: veh?.plate_number || expData.vehicle_plate || 'DK-0000-XX',
+      driver_id: expData.driver_id || drv?.id,
+      driver_name: expData.driver_name || (drv ? `${drv.first_name} ${drv.last_name}` : undefined),
+      category: expData.category || 'CARBURANT',
+      amount: expData.amount || 0,
+      currency: expData.currency || 'FCFA',
+      date: expData.date || new Date().toISOString().split('T')[0],
+      supplier: expData.supplier || 'Fournisseur Dakar',
+      liters: expData.liters,
+      price_per_liter: expData.price_per_liter,
+      odometer_at_expense: expData.odometer_at_expense ?? veh?.odometer_km,
+      description: expData.description,
+      receipt_url: expData.receipt_url,
+      created_by: user?.id,
+      created_at: new Date().toISOString(),
+    };
+
+    setExpenses((prev) => [created, ...prev]);
+    logAuditAction('EXPENSE_CREATE', { category: created.category, amount: created.amount, supplier: created.supplier });
+  };
+
+  const updateExpense = (id: string, updates: Partial<Expense>) => {
+    setExpenses((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, ...updates } : e))
+    );
+    logAuditAction('EXPENSE_UPDATE', { id, updates });
+  };
+
+  const deleteExpense = (id: string) => {
+    setExpenses((prev) => prev.filter((e) => e.id !== id));
+    logAuditAction('EXPENSE_DELETE', { id });
+  };
+
   const markAlertRead = (id: string) => {
     setAlerts((prev) =>
       prev.map((a) => (a.id === id ? { ...a, is_read: true, acknowledged: true, acknowledged_at: new Date().toISOString() } : a))
@@ -656,6 +1088,11 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         auditLogs,
         settings,
         alertRules,
+        maintenanceRecords,
+        maintenanceSchedules,
+        vehicleDocuments,
+        expenses,
+        tcoSummary,
         selectedVehicle,
         toastNotification,
         clearToast,
@@ -677,6 +1114,18 @@ export const FleetProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         toggleEngineImmobilizer,
         logAuditAction,
         updateSettings,
+        addMaintenanceRecord,
+        updateMaintenanceRecord,
+        deleteMaintenanceRecord,
+        addMaintenanceSchedule,
+        updateMaintenanceSchedule,
+        deleteMaintenanceSchedule,
+        addVehicleDocument,
+        updateVehicleDocument,
+        deleteVehicleDocument,
+        addExpense,
+        updateExpense,
+        deleteExpense,
       }}
     >
       {children}

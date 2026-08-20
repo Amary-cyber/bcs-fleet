@@ -112,7 +112,13 @@ export type AlertType =
   | 'LOW_BATTERY'
   | 'IGNITION'
   | 'SOS'
-  | 'TRACKER_ERROR';
+  | 'TRACKER_ERROR'
+  | 'MAINTENANCE_DUE'
+  | 'MAINTENANCE_OVERDUE'
+  | 'DOCUMENT_EXPIRING'
+  | 'INSURANCE_EXPIRING'
+  | 'TECHNICAL_INSPECTION_EXPIRING'
+  | 'LICENSE_EXPIRING';
 
 export type AlertSeverity = 'CRITICAL' | 'WARNING' | 'INFO';
 
@@ -138,6 +144,138 @@ export interface Alert {
   acknowledged_at?: string;
   timestamp: string;
   created_at?: string;
+}
+
+// ==========================================
+// MAINTENANCE & DOCUMENTS & EXPENSES TYPES
+// ==========================================
+export type MaintenanceType =
+  | 'OIL_CHANGE'
+  | 'INSPECTION'
+  | 'TIRES'
+  | 'BRAKES'
+  | 'BATTERY'
+  | 'REPAIR'
+  | 'TECHNICAL_INSPECTION'
+  | 'INSURANCE'
+  | 'OTHER';
+
+export type MaintenanceStatus = 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type MaintenancePriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+
+export interface MaintenanceRecord {
+  id: string;
+  organization_id?: string;
+  vehicle_id: string;
+  vehicle_name: string;
+  vehicle_plate: string;
+  type: MaintenanceType;
+  title: string;
+  description?: string;
+  status: MaintenanceStatus;
+  priority: MaintenancePriority;
+  provider: string;
+  cost: number;
+  currency: string; // 'FCFA' or 'XOF'
+  odometer?: number | null;
+  engine_hours?: number | null;
+  scheduled_date: string;
+  completed_date?: string | null;
+  next_due_date?: string | null;
+  next_due_odometer?: number | null;
+  next_due_engine_hours?: number | null;
+  invoice_number?: string;
+  notes?: string;
+  receipt_url?: string;
+  created_by?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface MaintenanceSchedule {
+  id: string;
+  organization_id?: string;
+  vehicle_id: string;
+  vehicle_name: string;
+  vehicle_plate: string;
+  type: MaintenanceType;
+  title: string;
+  interval_km?: number | null;
+  interval_months?: number | null;
+  interval_engine_hours?: number | null;
+  last_performed_date?: string | null;
+  last_performed_odometer?: number | null;
+  last_performed_engine_hours?: number | null;
+  active: boolean;
+  notes?: string;
+  created_at: string;
+}
+
+export type DocumentType =
+  | 'ASSURANCE'
+  | 'VISITE_TECHNIQUE'
+  | 'CARTE_GRISE'
+  | 'VIGNETTE'
+  | 'EXTINCTEUR'
+  | 'AUTRE';
+
+export interface VehicleDocument {
+  id: string;
+  organization_id?: string;
+  vehicle_id: string;
+  vehicle_name: string;
+  vehicle_plate: string;
+  type: DocumentType;
+  title: string;
+  document_number: string;
+  provider_or_center: string;
+  cost?: number;
+  issue_date: string;
+  expiry_date: string;
+  file_url?: string;
+  notes?: string;
+  created_at: string;
+}
+
+export type ExpenseCategory =
+  | 'CARBURANT'
+  | 'MAINTENANCE'
+  | 'REPARATION'
+  | 'PNEUS'
+  | 'PEAGE'
+  | 'ASSURANCE'
+  | 'AMENDES'
+  | 'AUTRE';
+
+export interface Expense {
+  id: string;
+  organization_id?: string;
+  vehicle_id: string;
+  vehicle_name: string;
+  vehicle_plate: string;
+  driver_id?: string;
+  driver_name?: string;
+  category: ExpenseCategory;
+  amount: number;
+  currency: string;
+  date: string;
+  supplier: string;
+  liters?: number;
+  price_per_liter?: number;
+  odometer_at_expense?: number;
+  description?: string;
+  receipt_url?: string;
+  created_by?: string;
+  created_at: string;
+}
+
+export interface TCOSummary {
+  totalCost: number;
+  totalDistanceKm: number;
+  costPerKm: number | null;
+  costByCategory: Record<ExpenseCategory, number>;
+  costByVehicle: Record<string, { name: string; plate: string; total: number; km: number; costPerKm: number | null }>;
+  monthlyTimeline: { month: string; total: number; fuel: number; maintenance: number; other: number }[];
 }
 
 export interface AlertRuleConfig {

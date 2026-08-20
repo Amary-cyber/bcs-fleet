@@ -635,14 +635,43 @@ export const VehiclesPage: React.FC<VehiclesPageProps> = ({
               </div>
             </div>
 
-            {/* Section 4: Télémétrie Live */}
+            {/* Section 4: Télémétrie & Capteurs */}
             <div className="space-y-2 glass-panel p-4 rounded-xl border border-slate-800 text-xs">
               <h4 className="text-slate-400 font-mono uppercase font-bold text-[10px] text-purple-400">4. Télémétrie &amp; Capteurs GPS</h4>
               <div className="grid grid-cols-2 gap-2 font-mono">
                 <div><span className="text-slate-500 block">Vitesse Instantanée:</span> <span className="text-white font-bold">{selectedDetailVehicle.current_speed} km/h</span></div>
                 <div><span className="text-slate-500 block">Cap / Orient. (°):</span> <span className="text-white font-bold">{selectedDetailVehicle.current_heading}°</span></div>
-                <div><span className="text-slate-500 block">Coordonnées GPS:</span> <span className="text-slate-300 text-[11px]">{selectedDetailVehicle.current_lat.toFixed(5)}, {selectedDetailVehicle.current_lng.toFixed(5)}</span></div>
+                <div><span className="text-slate-500 block">Odomètre Télématique:</span> <span className="text-cyan-400 font-bold">{selectedDetailVehicle.odometer_km ? `${selectedDetailVehicle.odometer_km.toLocaleString()} km` : 'Indisponible'}</span></div>
                 <div><span className="text-slate-500 block">Niveau Batterie:</span> <span className="text-emerald-400">{selectedDetailVehicle.battery_level !== null && selectedDetailVehicle.battery_level !== undefined ? `${selectedDetailVehicle.battery_level}%` : 'Non disponible'}</span></div>
+              </div>
+            </div>
+
+            {/* Section 5: Maintenance & Documents */}
+            <div className="space-y-3 glass-panel p-4 rounded-xl border border-slate-800 text-xs">
+              <div className="flex items-center justify-between">
+                <h4 className="font-mono uppercase font-bold text-[10px] text-amber-400">5. Maintenance &amp; Échéances</h4>
+                <button
+                  onClick={() => {
+                    const id = selectedDetailVehicle.id;
+                    setSelectedDetailVehicle(null);
+                    onNavigateTab('maintenance', id);
+                  }}
+                  className="text-amber-400 hover:text-amber-300 font-bold text-[11px] underline"
+                >
+                  Ouvrir Module Maintenance →
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-slate-300">
+                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800/80">
+                  <span className="text-slate-500 text-[10px] block">Odomètre Réel:</span>
+                  <span className="font-mono font-bold text-white">
+                    {selectedDetailVehicle.odometer_km ? `${selectedDetailVehicle.odometer_km.toLocaleString()} km` : 'Non disponible'}
+                  </span>
+                </div>
+                <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800/80">
+                  <span className="text-slate-500 text-[10px] block">Visite Technique:</span>
+                  <span className="font-mono font-bold text-emerald-400">Valide (CTTD)</span>
+                </div>
               </div>
             </div>
 

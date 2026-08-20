@@ -25,6 +25,8 @@ import { UsersPage } from './pages/UsersPage';
 import { AuditLogPage } from './pages/AuditLogPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AlertRulesPage } from './pages/AlertRulesPage';
+import { MaintenancePage } from './pages/MaintenancePage';
+import { ExpensesPage } from './pages/ExpensesPage';
 import { AlertToastContainer } from './components/layout/AlertToastContainer';
 import { Vehicle } from './types';
 
@@ -122,6 +124,15 @@ const MainAppContent: React.FC = () => {
           {currentTab === 'reports' && <ReportsPage />}
 
           {currentTab === 'users' && <UsersPage />}
+
+          {currentTab === 'maintenance' && (
+            <MaintenancePage
+              initialVehicleId={selectedVehicleForNav || undefined}
+              onNavigateTab={handleNavigateTab}
+            />
+          )}
+
+          {currentTab === 'expenses' && <ExpensesPage />}
 
           {currentTab === 'audit' && <AuditLogPage />}
 
