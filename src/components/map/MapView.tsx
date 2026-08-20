@@ -14,9 +14,8 @@ import {
   Shield,
   History,
   Lock,
-  Search,
-  X,
-  Navigation,
+  Plus,
+  Minus,
 } from 'lucide-react';
 
 export type MapTileLayerType = 'voyager' | 'dark' | 'satellite' | 'osm' | 'topo';
@@ -473,7 +472,8 @@ export const MapView: React.FC<MapViewProps> = ({
   }
 
   // Toggle Browser Native Fullscreen Mode (Strictly handled with resize & invalidateSize)
-  const toggleFullscreen = async () => {
+  const toggleFullscreen = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     if (!containerRef.current) return;
 
     try {
@@ -493,33 +493,69 @@ export const MapView: React.FC<MapViewProps> = ({
     <div
       ref={containerRef}
       className={`w-full h-full relative rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-950 transition-all ${
-        isFullscreen ? 'fixed inset-0 z-50 rounded-none border-0' : ''
+        isFullscreen ? 'fixed inset-0 z-[100] rounded-none border-0' : ''
       }`}
     >
       {/* Map Target DOM */}
       <div ref={mapContainerRef} className="w-full h-full min-h-[450px]" />
 
-      {/* Floating Map Action Controls (Top Right) */}
-      <div className="absolute top-4 right-4 z-20 flex flex-col space-y-2">
-        {/* Layer Selector Toggle */}
+      {/* ============================================================ */}
+      {/* PROFESSIONAL MAP CONTROLS STACK (TOP RIGHT - Z-INDEX 1000)   */}
+      {/* ============================================================ */}
+      <div
+        className="absolute top-4 right-4 z-[1000] flex flex-col space-y-2 pointer-events-auto select-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Zoom In (+) */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            mapInstanceRef.current?.zoomIn();
+          }}
+          className="bcs-map-control-btn"
+          title="Zoom avant (+)"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+
+        {/* Zoom Out (−) */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            mapInstanceRef.current?.zoomOut();
+          }}
+          className="bcs-map-control-btn"
+          title="Zoom arrière (−)"
+        >
+          <Minus className="w-4 h-4" />
+        </button>
+
+        {/* Layer Selector Toggle (🗺) */}
         <div className="relative">
           <button
-            onClick={() => setShowLayerSelector(!showLayerSelector)}
-            className="p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-cyan-400 border border-slate-700 shadow-2xl backdrop-blur-md transition-all"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowLayerSelector(!showLayerSelector);
+            }}
+            className={`bcs-map-control-btn ${showLayerSelector ? 'active' : ''}`}
             title="Changer le fond de carte"
           >
             <Layers className="w-4 h-4" />
           </button>
 
           {showLayerSelector && (
-            <div className="absolute right-0 mt-2 w-52 rounded-xl bg-slate-900/95 border border-slate-700 shadow-2xl p-2 z-30 space-y-1 text-xs backdrop-blur-xl animate-in fade-in">
+            <div
+              className="absolute right-0 mt-2 w-52 rounded-xl bg-slate-900/95 border border-slate-700 shadow-2xl p-2 z-[1010] space-y-1 text-xs backdrop-blur-xl animate-in fade-in"
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 py-1">
                 Fonds Cartographiques
               </div>
               {(Object.keys(TILE_LAYERS) as MapTileLayerType[]).map((layerKey) => (
                 <button
                   key={layerKey}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     setActiveLayer(layerKey);
                     setShowLayerSelector(false);
                   }}
@@ -537,63 +573,43 @@ export const MapView: React.FC<MapViewProps> = ({
           )}
         </div>
 
-        {/* Center Whole Fleet */}
+        {/* Center Whole Fleet (⌖) */}
         <button
-          onClick={fitFleetBounds}
-          className="p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 shadow-2xl backdrop-blur-md transition-all"
+          onClick={(e) => {
+            e.stopPropagation();
+            fitFleetBounds();
+          }}
+          className="bcs-map-control-btn"
           title="Centrer toute la flotte active"
         >
           <Crosshair className="w-4 h-4" />
         </button>
 
-        {/* Toggle Geofences */}
+        {/* Toggle Geofences (🛡) */}
         <button
-          onClick={() => setShowGeofences(!showGeofences)}
-          className={`p-2.5 rounded-xl border shadow-2xl backdrop-blur-md transition-all ${
-            showGeofences
-              ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/40'
-              : 'bg-slate-900/90 text-slate-400 border-slate-700 hover:text-slate-200'
-          }`}
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowGeofences(!showGeofences);
+          }}
+          className={`bcs-map-control-btn ${showGeofences ? 'active' : ''}`}
           title={showGeofences ? 'Masquer les géofences' : 'Afficher les géofences'}
         >
           <Shield className="w-4 h-4" />
         </button>
 
-        {/* Native Fullscreen Toggle Button */}
+        {/* Native Fullscreen Toggle Button (⛶) */}
         <button
           onClick={toggleFullscreen}
-          className={`p-2.5 rounded-xl border shadow-2xl backdrop-blur-md transition-all ${
-            isFullscreen
-              ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-              : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border-slate-700'
-          }`}
+          className={`bcs-map-control-btn ${isFullscreen ? 'active !text-amber-400 !border-amber-500/50' : ''}`}
           title={isFullscreen ? '✕ Quitter le plein écran (Échap)' : '⛶ Mode Plein Écran'}
         >
           {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
         </button>
       </div>
 
-      {/* Floating Zoom Controls (Bottom Right) */}
-      <div className="absolute bottom-6 right-4 z-20 flex flex-col space-y-1.5">
-        <button
-          onClick={() => mapInstanceRef.current?.zoomIn()}
-          className="w-8 h-8 rounded-lg bg-slate-900/90 hover:bg-slate-800 text-white font-bold flex items-center justify-center border border-slate-700 shadow-xl backdrop-blur-md text-sm transition-colors"
-          title="Zoom avant"
-        >
-          +
-        </button>
-        <button
-          onClick={() => mapInstanceRef.current?.zoomOut()}
-          className="w-8 h-8 rounded-lg bg-slate-900/90 hover:bg-slate-800 text-white font-bold flex items-center justify-center border border-slate-700 shadow-xl backdrop-blur-md text-sm transition-colors"
-          title="Zoom arrière"
-        >
-          -
-        </button>
-      </div>
-
       {/* Floating Live Follow Banner (Bottom Center) */}
       {isFollowMode && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2">
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[900] flex items-center gap-2">
           {isFollowSuspended ? (
             <button
               onClick={() => setIsFollowSuspended(false)}

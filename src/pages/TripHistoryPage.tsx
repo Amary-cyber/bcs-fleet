@@ -30,7 +30,10 @@ import {
   Minimize,
   SkipBack,
   SkipForward,
+  Crosshair,
   ShieldAlert,
+  Plus,
+  Minus,
 } from 'lucide-react';
 import { MapTileLayerType } from '../components/map/MapView';
 
@@ -115,6 +118,19 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       }, 150);
     }
   }, []);
+
+  // Fit bounds strictly to the real displayed trip points
+  const fitTripBounds = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || displayPositions.length === 0) return;
+
+    const bounds = L.latLngBounds([]);
+    displayPositions.forEach((p) => bounds.extend([p.lat, p.lng]));
+
+    if (bounds.isValid()) {
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+    }
+  }, [displayPositions]);
 
   // Handle selected vehicle sync
   useEffect(() => {
@@ -334,7 +350,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
 
     // 3. Fit Map Bounds (Strictly matching real display points)
     if (bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+      map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
     }
 
     // 4. Initial Animated Marker
@@ -405,8 +421,9 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
     }
   }, [playbackIndex, displayPositions]);
 
-  // Toggle Browser Native Fullscreen Mode (Strictly handled with resize & invalidateSize)
-  const toggleFullscreen = async () => {
+  // Toggle Browser Native Fullscreen Mode
+  const toggleFullscreen = async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
     if (!containerRef.current) return;
 
     try {
@@ -690,7 +707,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       <div
         ref={containerRef}
         className={`glass-panel p-4 rounded-2xl border border-slate-800 space-y-4 relative ${
-          isFullscreen ? 'fixed inset-0 z-50 rounded-none border-0 p-4 bg-slate-950 flex flex-col' : ''
+          isFullscreen ? 'fixed inset-0 z-[100] rounded-none border-0 p-4 bg-slate-950 flex flex-col' : ''
         }`}
       >
         {/* Leaflet Map Target */}
@@ -699,27 +716,63 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
         }`}>
           <div ref={mapContainerRef} className="w-full h-full" />
 
-          {/* Floating Map Controls (Top Right) */}
-          <div className="absolute top-4 right-4 z-20 flex items-center space-x-2">
-            {/* Layer Selector */}
+          {/* ============================================================ */}
+          {/* PROFESSIONAL MAP CONTROLS STACK (TOP RIGHT - Z-INDEX 1000)   */}
+          {/* ============================================================ */}
+          <div
+            className="absolute top-4 right-4 z-[1000] flex flex-col space-y-2 pointer-events-auto select-none"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Zoom In (+) */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                mapRef.current?.zoomIn();
+              }}
+              className="bcs-map-control-btn"
+              title="Zoom avant (+)"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+
+            {/* Zoom Out (−) */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                mapRef.current?.zoomOut();
+              }}
+              className="bcs-map-control-btn"
+              title="Zoom arrière (−)"
+            >
+              <Minus className="w-4 h-4" />
+            </button>
+
+            {/* Layer Selector (🗺) */}
             <div className="relative">
               <button
-                onClick={() => setShowLayerSelector(!showLayerSelector)}
-                className="p-2.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 text-cyan-400 border border-slate-700 shadow-2xl backdrop-blur-md transition-all"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowLayerSelector(!showLayerSelector);
+                }}
+                className={`bcs-map-control-btn ${showLayerSelector ? 'active' : ''}`}
                 title="Changer le fond de carte"
               >
                 <Layers className="w-4 h-4" />
               </button>
 
               {showLayerSelector && (
-                <div className="absolute right-0 mt-2 w-52 rounded-xl bg-slate-900/95 border border-slate-700 shadow-2xl p-2 z-30 space-y-1 text-xs backdrop-blur-xl animate-in fade-in">
+                <div
+                  className="absolute right-0 mt-2 w-52 rounded-xl bg-slate-900/95 border border-slate-700 shadow-2xl p-2 z-[1010] space-y-1 text-xs backdrop-blur-xl animate-in fade-in"
+                  onClick={(e) => e.stopPropagation()}
+                >
                   <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider px-2 py-1">
                     Fonds Cartographiques
                   </div>
                   {(Object.keys(HISTORY_TILE_LAYERS) as MapTileLayerType[]).map((layerKey) => (
                     <button
                       key={layerKey}
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         setActiveLayer(layerKey);
                         setShowLayerSelector(false);
                       }}
@@ -737,23 +790,31 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
               )}
             </div>
 
-            {/* Native Fullscreen Button */}
+            {/* Recenter Trip / FitBounds (⌖) */}
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                fitTripBounds();
+              }}
+              className="bcs-map-control-btn"
+              title="Recentrer le trajet complet"
+            >
+              <Crosshair className="w-4 h-4" />
+            </button>
+
+            {/* Native Fullscreen Button (⛶) */}
             <button
               onClick={toggleFullscreen}
-              className={`p-2.5 rounded-xl border shadow-2xl backdrop-blur-md transition-all ${
-                isFullscreen
-                  ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                  : 'bg-slate-900/90 hover:bg-slate-800 text-slate-200 border-slate-700'
-              }`}
+              className={`bcs-map-control-btn ${isFullscreen ? 'active !text-amber-400 !border-amber-500/50' : ''}`}
               title={isFullscreen ? '✕ Quitter le plein écran (Échap)' : '⛶ Mode Plein Écran'}
             >
               {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
             </button>
           </div>
 
-          {/* Telemetry HUD Overlay */}
+          {/* Telemetry HUD Overlay (Top Left - Z-INDEX 900) */}
           {processedData && currentPoint && (
-            <div className="absolute top-4 left-4 glass-card p-3 rounded-xl border border-slate-700/90 z-20 text-xs font-mono space-y-1.5 shadow-2xl backdrop-blur-xl">
+            <div className="absolute top-4 left-4 glass-card p-3 rounded-xl border border-slate-700/90 z-[900] text-xs font-mono space-y-1.5 shadow-2xl backdrop-blur-xl pointer-events-auto">
               <div className="flex items-center space-x-2">
                 <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
                 <span className="text-cyan-400 font-bold">{selectedVeh?.name || 'Traceur'}</span>
@@ -785,9 +846,9 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
             </div>
           )}
 
-          {/* Speed Legend Overlay */}
+          {/* Speed Legend Overlay (Bottom Left - Z-INDEX 900) */}
           {processedData && displayPositions.length > 0 && (
-            <div className="absolute bottom-4 left-4 glass-card px-3 py-2 rounded-xl border border-slate-800 z-20 text-[10px] font-mono flex items-center space-x-3 shadow-xl">
+            <div className="absolute bottom-4 left-4 glass-card px-3 py-2 rounded-xl border border-slate-800 z-[900] text-[10px] font-mono flex items-center space-x-3 shadow-xl pointer-events-none">
               <div className="flex items-center space-x-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#06B6D4]" />
                 <span className="text-slate-300">&lt; 50 km/h</span>
