@@ -146,6 +146,7 @@ const MainAppContent: React.FC = () => {
       {/* Slide-over Notifications Feed Drawer */}
       <NotificationDrawer
         onSelectVehicleLocation={(vehicleId) => handleNavigateTab('tracking', vehicleId)}
+        onNavigateTab={handleNavigateTab}
       />
 
       {/* Engine Immobilizer Safety Modal */}
