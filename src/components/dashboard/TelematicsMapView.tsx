@@ -66,6 +66,14 @@ export const TelematicsMapView: React.FC<TelematicsMapViewProps> = ({
     geofenceLayersRef.current = L.layerGroup([] as any).addTo(map);
     mapRef.current = map;
 
+    // Multi-pass initial invalidation to ensure full viewport tile loading immediately
+    requestAnimationFrame(() => {
+      map.invalidateSize({ animate: false });
+    });
+    setTimeout(() => map.invalidateSize({ animate: false }), 80);
+    setTimeout(() => map.invalidateSize({ animate: false }), 250);
+    setTimeout(() => map.invalidateSize({ animate: false }), 600);
+
     return () => {
       map.remove();
       mapRef.current = null;
@@ -74,7 +82,7 @@ export const TelematicsMapView: React.FC<TelematicsMapViewProps> = ({
 
   // Universal Resize Hook
   useLeafletMapResize({
-    map: mapRef.current,
+    map: mapRef,
     containerRef: mapContainerRef,
     deps: [selectedVehicleId, mapStyle, vehicles.length],
   });

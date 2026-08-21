@@ -124,7 +124,7 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
 
   // Universal Resize Hook (multi-pass invalidateSize & ResizeObserver)
   const { invalidateSize: invalidateMapSize } = useLeafletMapResize({
-    map: mapRef.current,
+    map: mapRef,
     containerRef,
     deps: [selectedVehicleId, selectedDate, isFullscreen, activeLayer, displayPositions.length],
   });
@@ -230,6 +230,14 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
     activeTileLayerRef.current = initialTile;
     polylineLayerGroupRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
+
+    // Multi-pass initial invalidation to ensure full viewport tile loading immediately
+    requestAnimationFrame(() => {
+      map.invalidateSize({ animate: false });
+    });
+    setTimeout(() => map.invalidateSize({ animate: false }), 80);
+    setTimeout(() => map.invalidateSize({ animate: false }), 250);
+    setTimeout(() => map.invalidateSize({ animate: false }), 600);
 
     map.on('dragstart', () => {
       // Pause manual follow on user drag

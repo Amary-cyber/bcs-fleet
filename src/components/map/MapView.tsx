@@ -118,6 +118,14 @@ export const MapView: React.FC<MapViewProps> = ({
     geofenceLayersRef.current = L.layerGroup().addTo(map);
     mapInstanceRef.current = map;
 
+    // Multi-pass initial invalidation to ensure full viewport tile loading immediately
+    requestAnimationFrame(() => {
+      map.invalidateSize({ animate: false });
+    });
+    setTimeout(() => map.invalidateSize({ animate: false }), 80);
+    setTimeout(() => map.invalidateSize({ animate: false }), 250);
+    setTimeout(() => map.invalidateSize({ animate: false }), 600);
+
     // Listeners
     map.on('zoomend', () => {
       setCurrentZoom(map.getZoom());
@@ -137,7 +145,7 @@ export const MapView: React.FC<MapViewProps> = ({
 
   // Universal Resize Hook (multi-pass invalidateSize & ResizeObserver)
   const { invalidateSize: invalidateMapSize } = useLeafletMapResize({
-    map: mapInstanceRef.current,
+    map: mapInstanceRef,
     containerRef,
     deps: [selectedVehicleId, isFullscreen, activeLayer, isFollowMode, isFollowSuspended],
   });
