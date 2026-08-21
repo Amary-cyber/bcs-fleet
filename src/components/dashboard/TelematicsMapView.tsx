@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { Vehicle, Geofence } from '../../types';
 import { useTheme } from '../../contexts/ThemeContext';
+import { useLeafletMapResize } from '../map/useLeafletMapResize';
 import { Maximize2, Minimize2, Crosshair, Map, Plus, Minus, Sun, Moon } from 'lucide-react';
 
 interface TelematicsMapViewProps {
@@ -65,39 +66,18 @@ export const TelematicsMapView: React.FC<TelematicsMapViewProps> = ({
     geofenceLayersRef.current = L.layerGroup([] as any).addTo(map);
     mapRef.current = map;
 
-    // ResizeObserver to automatically fix tile rendering bugs when container resizes
-    const resizeObserver = new ResizeObserver(() => {
-      if (mapRef.current) {
-        mapRef.current.invalidateSize();
-      }
-    });
-
-    if (mapContainerRef.current) {
-      resizeObserver.observe(mapContainerRef.current);
-    }
-
-    // Delayed invalidateSize trigger after flexbox layout settles
-    setTimeout(() => {
-      if (mapRef.current) {
-        mapRef.current.invalidateSize();
-      }
-    }, 200);
-
     return () => {
-      resizeObserver.disconnect();
       map.remove();
       mapRef.current = null;
     };
   }, []);
 
-  // Invalidate map size when selected vehicle panel state changes
-  useEffect(() => {
-    if (mapRef.current) {
-      setTimeout(() => {
-        mapRef.current?.invalidateSize();
-      }, 100);
-    }
-  }, [selectedVehicleId]);
+  // Universal Resize Hook
+  useLeafletMapResize({
+    map: mapRef.current,
+    containerRef: mapContainerRef,
+    deps: [selectedVehicleId, mapStyle, vehicles.length],
+  });
 
   // Update Tile Layer URL when mapStyle changes
   useEffect(() => {
@@ -261,7 +241,7 @@ export const TelematicsMapView: React.FC<TelematicsMapViewProps> = ({
 
   return (
     <div className="relative w-full h-full min-h-[420px] rounded-2xl overflow-hidden shadow-2xl border border-slate-800">
-      <div ref={mapContainerRef} className="w-full h-full" />
+      <div ref={mapContainerRef} className="absolute inset-0 w-full h-full" />
 
       {/* Cartographic Controls */}
       <div className="absolute top-4 right-4 z-20 flex flex-col space-y-2">

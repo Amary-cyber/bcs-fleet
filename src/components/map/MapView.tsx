@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import { Vehicle, Geofence } from '../../types';
+import { useLeafletMapResize } from './useLeafletMapResize';
 import {
   Layers,
   Maximize,
@@ -96,18 +97,6 @@ export const MapView: React.FC<MapViewProps> = ({
   const [isFollowSuspended, setIsFollowSuspended] = useState<boolean>(false);
   const [currentZoom, setCurrentZoom] = useState<number>(zoom);
 
-  // Invalidate Map Size helper (Essential for zero-grey map on resize/fullscreen)
-  const invalidateMapSize = useCallback(() => {
-    if (mapInstanceRef.current) {
-      requestAnimationFrame(() => {
-        mapInstanceRef.current?.invalidateSize();
-      });
-      setTimeout(() => {
-        mapInstanceRef.current?.invalidateSize();
-      }, 150);
-    }
-  }, []);
-
   // Initialize Leaflet Map
   useEffect(() => {
     if (!mapContainerRef.current || mapInstanceRef.current) return;
@@ -146,6 +135,13 @@ export const MapView: React.FC<MapViewProps> = ({
     };
   }, []);
 
+  // Universal Resize Hook (multi-pass invalidateSize & ResizeObserver)
+  const { invalidateSize: invalidateMapSize } = useLeafletMapResize({
+    map: mapInstanceRef.current,
+    containerRef,
+    deps: [selectedVehicleId, isFullscreen, activeLayer, isFollowMode, isFollowSuspended],
+  });
+
   // Handle Fullscreen state change from Browser API
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -155,15 +151,12 @@ export const MapView: React.FC<MapViewProps> = ({
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    window.addEventListener('resize', invalidateMapSize);
-
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      window.removeEventListener('resize', invalidateMapSize);
     };
   }, [invalidateMapSize]);
 
-  // Switch Tile Layer Instantly
+  // Switch Tile Layer Instantly (Without resetting zoom or center)
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -197,8 +190,9 @@ export const MapView: React.FC<MapViewProps> = ({
     if (bounds.isValid()) {
       map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
       setIsFollowSuspended(false);
+      invalidateMapSize();
     }
-  }, [vehicles]);
+  }, [vehicles, invalidateMapSize]);
 
   // Render Geofences Layer
   useEffect(() => {
@@ -248,20 +242,27 @@ export const MapView: React.FC<MapViewProps> = ({
 
     // CLUSTERING MODE: If map is zoomed out (zoom < 10) and multiple vehicles exist
     if (currentZoom < 10 && vehicles.length > 3) {
-      // Hide individual markers
-      markersRef.current.forEach((m) => m.remove());
+      // Clear individual markers
+      markersRef.current.forEach((marker) => marker.remove());
       markersRef.current.clear();
 
-      // Cluster vehicles into centroid badge
-      const clusterCenter = [
-        vehicles.reduce((acc, v) => acc + v.current_lat, 0) / vehicles.length,
-        vehicles.reduce((acc, v) => acc + v.current_lng, 0) / vehicles.length,
-      ] as [number, number];
+      let sumLat = 0;
+      let sumLng = 0;
+      let validCount = 0;
+
+      vehicles.forEach((v) => {
+        if (v.current_lat && v.current_lng) {
+          sumLat += v.current_lat;
+          sumLng += v.current_lng;
+          validCount++;
+        }
+      });
+
+      const clusterCenter: [number, number] = validCount > 0 ? [sumLat / validCount, sumLng / validCount] : center;
 
       const clusterHtml = `
-        <div class="w-12 h-12 rounded-2xl bg-cyan-500/90 border-2 border-white shadow-2xl flex flex-col items-center justify-center cursor-pointer text-slate-950 font-black font-mono">
-          <span class="text-xs">${vehicles.length}</span>
-          <span class="text-[8px] uppercase tracking-tighter">Véhicules</span>
+        <div class="relative flex items-center justify-center w-12 h-12 rounded-full bg-cyan-500/20 border-2 border-cyan-400 text-cyan-300 font-mono font-bold shadow-2xl backdrop-blur-md animate-pulse">
+          <span class="text-sm">${validCount}</span>
         </div>
       `;
 
@@ -462,6 +463,16 @@ export const MapView: React.FC<MapViewProps> = ({
         animate: true,
         duration: 0.5,
       });
+    } else if (!isFollowMode) {
+      mapInstanceRef.current.panTo([vehicle.current_lat, vehicle.current_lng], {
+        animate: true,
+        duration: 0.5,
+      });
+      // Automatically open vehicle marker popup on selection
+      const marker = markersRef.current.get(vehicle.id);
+      if (marker && !marker.isPopupOpen()) {
+        marker.openPopup();
+      }
     }
   }, [selectedVehicleId, vehicles, isFollowMode, isFollowSuspended]);
 
@@ -493,11 +504,11 @@ export const MapView: React.FC<MapViewProps> = ({
     <div
       ref={containerRef}
       className={`w-full h-full relative rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-950 transition-all ${
-        isFullscreen ? 'fixed inset-0 z-[100] rounded-none border-0' : ''
+        isFullscreen ? 'fixed inset-0 z-[9999] rounded-none border-0' : ''
       }`}
     >
-      {/* Map Target DOM */}
-      <div ref={mapContainerRef} className="w-full h-full min-h-[450px]" />
+      {/* Map Target DOM (absolute inset-0 to guarantee 100% fill without grey voids) */}
+      <div ref={mapContainerRef} className="absolute inset-0 w-full h-full" />
 
       {/* ============================================================ */}
       {/* PROFESSIONAL MAP CONTROLS STACK (TOP RIGHT - Z-INDEX 1000)   */}

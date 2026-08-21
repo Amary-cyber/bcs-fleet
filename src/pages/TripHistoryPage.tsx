@@ -38,6 +38,7 @@ import {
   Radio,
 } from 'lucide-react';
 import { MapTileLayerType } from '../components/map/MapView';
+import { useLeafletMapResize } from '../components/map/useLeafletMapResize';
 
 const HISTORY_TILE_LAYERS: Record<
   MapTileLayerType,
@@ -121,17 +122,12 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
     return displayPositions[safeIdx] || null;
   }, [displayPositions, playbackIndex]);
 
-  // Invalidate Map Size helper (Essential for zero-grey map on resize/fullscreen)
-  const invalidateMapSize = useCallback(() => {
-    if (mapRef.current) {
-      requestAnimationFrame(() => {
-        mapRef.current?.invalidateSize();
-      });
-      setTimeout(() => {
-        mapRef.current?.invalidateSize();
-      }, 150);
-    }
-  }, []);
+  // Universal Resize Hook (multi-pass invalidateSize & ResizeObserver)
+  const { invalidateSize: invalidateMapSize } = useLeafletMapResize({
+    map: mapRef.current,
+    containerRef,
+    deps: [selectedVehicleId, selectedDate, isFullscreen, activeLayer, displayPositions.length],
+  });
 
   // Fit bounds strictly to the real displayed trip points
   const fitTripBounds = useCallback(() => {
@@ -143,8 +139,9 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
 
     if (bounds.isValid()) {
       map.fitBounds(bounds, { padding: [50, 50], maxZoom: 16 });
+      invalidateMapSize();
     }
-  }, [displayPositions]);
+  }, [displayPositions, invalidateMapSize]);
 
   // Handle selected vehicle sync from navigation prop
   useEffect(() => {
@@ -164,11 +161,8 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
-    window.addEventListener('resize', invalidateMapSize);
-
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      window.removeEventListener('resize', invalidateMapSize);
     };
   }, [invalidateMapSize]);
 
@@ -807,14 +801,14 @@ export const TripHistoryPage: React.FC<TripHistoryPageProps> = ({ selectedVehicl
       <div
         ref={containerRef}
         className={`glass-panel p-4 rounded-2xl border border-slate-800 space-y-4 relative ${
-          isFullscreen ? 'fixed inset-0 z-[100] rounded-none border-0 p-4 bg-slate-950 flex flex-col' : ''
+          isFullscreen ? 'fixed inset-0 z-[9999] rounded-none border-0 p-4 bg-slate-950 flex flex-col' : ''
         }`}
       >
         {/* Leaflet Map Target */}
         <div className={`w-full rounded-xl overflow-hidden border border-slate-800 relative shadow-2xl ${
           isFullscreen ? 'flex-1 min-h-0' : 'h-[480px]'
         }`}>
-          <div ref={mapContainerRef} className="w-full h-full" />
+          <div ref={mapContainerRef} className="absolute inset-0 w-full h-full" />
 
           {/* ============================================================ */}
           {/* PROFESSIONAL MAP CONTROLS STACK (TOP RIGHT - Z-INDEX 1000)   */}

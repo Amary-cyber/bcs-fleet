@@ -75,6 +75,7 @@ export const NotificationDrawer: React.FC<{ onSelectVehicleLocation?: (vehicleId
                   key={item.id}
                   onClick={() => {
                     markAlertRead(item.id);
+                    setDrawerOpen(false);
                     if (onSelectVehicleLocation) {
                       onSelectVehicleLocation(item.vehicle_id);
                     }

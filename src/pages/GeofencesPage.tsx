@@ -3,6 +3,7 @@ import L from 'leaflet';
 import { useFleet } from '../contexts/FleetContext';
 import { useAuth } from '../contexts/AuthContext';
 import { Geofence, GeofenceType } from '../types';
+import { useLeafletMapResize } from '../components/map/useLeafletMapResize';
 import {
   CircleDot,
   Plus,
@@ -76,6 +77,13 @@ export const GeofencesPage: React.FC = () => {
       mapRef.current = null;
     };
   }, []);
+
+  // Universal Resize Hook
+  useLeafletMapResize({
+    map: mapRef.current,
+    containerRef: mapContainerRef,
+    deps: [selectedGeofence, geofences.length],
+  });
 
   // Draw Geofences on Map
   useEffect(() => {
@@ -277,7 +285,7 @@ export const GeofencesPage: React.FC = () => {
           </div>
 
           <div className="flex-1 rounded-xl overflow-hidden border border-slate-800 relative">
-            <div ref={mapContainerRef} className="w-full h-full" />
+            <div ref={mapContainerRef} className="absolute inset-0 w-full h-full" />
           </div>
         </div>
       </div>
