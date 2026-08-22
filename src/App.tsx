@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { TraccarProvider } from './contexts/TraccarContext';
 import { FleetProvider, useFleet } from './contexts/FleetContext';
@@ -8,8 +8,11 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { TelematicsHeader } from './components/dashboard/TelematicsHeader';
 import { Sidebar } from './components/layout/Sidebar';
 import { MobileNav } from './components/layout/MobileNav';
+import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { NotificationDrawer } from './components/layout/NotificationDrawer';
 import { EngineImmobilizerModal } from './components/immobilize/EngineImmobilizerModal';
+import { InstallPrompt } from './components/pwa/InstallPrompt';
+import { useOnlineStatus } from './lib/hooks/useOnlineStatus';
 
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -29,15 +32,35 @@ import { MaintenancePage } from './pages/MaintenancePage';
 import { ExpensesPage } from './pages/ExpensesPage';
 import { AlertToastContainer } from './components/layout/AlertToastContainer';
 import { Vehicle } from './types';
-
+import { WifiOff, X } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
   const { isAuthenticated } = useAuth();
   const { setSelectedVehicle } = useFleet();
+  const isOnline = useOnlineStatus();
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [selectedVehicleForNav, setSelectedVehicleForNav] = useState<string | null>(null);
   const [immobilizeVehicleTarget, setImmobilizeVehicleTarget] = useState<Vehicle | null>(null);
+  const [showOfflineToast, setShowOfflineToast] = useState<boolean>(false);
+
+  // Handle URL shortcut parameters for PWA launch
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const tabParam = urlParams.get('tab');
+    if (tabParam) {
+      setCurrentTab(tabParam);
+    }
+  }, []);
+
+  // Offline toast management
+  useEffect(() => {
+    if (!isOnline) {
+      setShowOfflineToast(true);
+    } else {
+      setShowOfflineToast(false);
+    }
+  }, [isOnline]);
 
   if (!isAuthenticated) {
     return <LoginPage />;
@@ -73,6 +96,19 @@ const MainAppContent: React.FC = () => {
 
       {/* Right Main Container */}
       <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
+        {/* Offline Banner Toast */}
+        {showOfflineToast && (
+          <div className="bg-amber-600 text-white px-4 py-1 text-xs font-bold flex items-center justify-between z-50 animate-fadeIn select-none shadow-md">
+            <div className="flex items-center gap-2">
+              <WifiOff className="w-4 h-4 animate-pulse" />
+              <span>Mode hors-ligne actif. Vos données locales télématiques restent accessibles.</span>
+            </div>
+            <button onClick={() => setShowOfflineToast(false)} className="p-0.5 hover:bg-amber-700 rounded">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         <TelematicsHeader
           onVehicleSelect={(v) => {
             setSelectedVehicle(v);
@@ -81,7 +117,7 @@ const MainAppContent: React.FC = () => {
           onMobileMenuToggle={() => setIsMobileMenuOpen(true)}
         />
 
-        <main className="flex-1 overflow-y-auto p-3 lg:p-4 bg-slate-950/80">
+        <main className="flex-1 overflow-y-auto p-3 lg:p-4 pb-24 lg:pb-4 bg-slate-950/80">
           {currentTab === 'dashboard' && (
             <DashboardPage
               onNavigateTab={handleNavigateTab}
@@ -143,6 +179,13 @@ const MainAppContent: React.FC = () => {
         </main>
       </div>
 
+      {/* Mobile Bottom Navigation Bar */}
+      <MobileBottomNav
+        currentTab={currentTab}
+        onTabSelect={handleNavigateTab}
+        onOpenMenu={() => setIsMobileMenuOpen(true)}
+      />
+
       {/* Slide-over Notifications Feed Drawer */}
       <NotificationDrawer
         onSelectVehicleLocation={(vehicleId) => handleNavigateTab('tracking', vehicleId)}
@@ -156,6 +199,9 @@ const MainAppContent: React.FC = () => {
           onClose={() => setImmobilizeVehicleTarget(null)}
         />
       )}
+
+      {/* Floating PWA Install Prompt Banner & Modal */}
+      <InstallPrompt />
     </div>
   );
 };
@@ -175,4 +221,3 @@ export default function App() {
     </ThemeProvider>
   );
 }
-

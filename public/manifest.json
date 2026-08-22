@@ -1,0 +1,72 @@
+﻿{
+  "id": "bcs-fleet-pro-pwa",
+  "name": "BCS Fleet PRO — Supervision Télématique & Flotte GPS",
+  "short_name": "BCS Fleet",
+  "description": "Plateforme mobile de supervision télématique en temps réel, suivi GPS Traccar, historique des trajets et gestion de flotte BCS GROUPE Dakar",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#020617",
+  "theme_color": "#0F172A",
+  "categories": ["business", "productivity", "utilities", "navigation"],
+  "icons": [
+    {
+      "src": "/bcs-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/bcs-logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/bcs-logo-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "64x64",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Live Tracking GPS",
+      "short_name": "Live GPS",
+      "description": "Suivi en direct des véhicules sur la carte",
+      "url": "/?tab=tracking",
+      "icons": [{ "src": "/bcs-logo-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Tableau de Bord",
+      "short_name": "Dashboard",
+      "description": "Vue d'ensemble de la flotte et indicateurs",
+      "url": "/?tab=dashboard",
+      "icons": [{ "src": "/bcs-logo-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Véhicules & Flotte",
+      "short_name": "Véhicules",
+      "description": "Liste des véhicules et état des traceurs",
+      "url": "/?tab=vehicles",
+      "icons": [{ "src": "/bcs-logo-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Alertes Flotte",
+      "short_name": "Alertes",
+      "description": "Notifications et alertes de sécurité",
+      "url": "/?tab=alerts",
+      "icons": [{ "src": "/bcs-logo-192.png", "sizes": "192x192" }]
+    }
+  ],
+  "lang": "fr",
+  "dir": "ltr",
+  "prefer_related_applications": false
+}

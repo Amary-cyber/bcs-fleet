@@ -1,10 +1,11 @@
-import React, { useState, useRef, useEffect } from 'react';
+﻿import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTraccar } from '../../contexts/TraccarContext';
 import { useFleet } from '../../contexts/FleetContext';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useNotifications } from '../../contexts/NotificationContext';
 import { Vehicle, UserRole } from '../../types';
+import { useOnlineStatus } from '../../lib/hooks/useOnlineStatus';
 import {
   Search,
   Radio,
@@ -17,6 +18,9 @@ import {
   Flame,
   Car,
   MapPin,
+  Download,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
 interface TelematicsHeaderProps {
@@ -33,6 +37,7 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
   const { vehicles, alerts } = useFleet();
   const { theme, toggleTheme } = useTheme();
   const { setDrawerOpen } = useNotifications();
+  const isOnline = useOnlineStatus();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -49,28 +54,14 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
           v.name.toLowerCase().includes(query) ||
           v.plate_number.toLowerCase().includes(query) ||
           (v.driver_name && v.driver_name.toLowerCase().includes(query)) ||
-          (v.device_imei && v.device_imei.toLowerCase().includes(query)) ||
-          (v.last_address && v.last_address.toLowerCase().includes(query))
+          (v.device_imei && v.device_imei.toLowerCase().includes(query))
         );
       })
     : [];
 
-  // Hotkey listener (Ctrl+K or / to focus search)
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        e.preventDefault();
-        inputRef.current?.focus();
-        setIsSearchOpen(true);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
         setIsSearchOpen(false);
       }
     };
@@ -78,52 +69,49 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const handleOpenInstallModal = () => {
+    window.dispatchEvent(new CustomEvent('open-pwa-install-modal'));
+  };
+
   return (
-    <header className="sticky top-0 z-30 h-16 bg-slate-900/90 dark:bg-slate-900/90 light:bg-white/95 backdrop-blur-xl border-b border-slate-800/80 dark:border-slate-800/80 light:border-slate-200 px-4 lg:px-6 flex items-center justify-between shadow-lg transition-colors">
-      {/* Left: Hamburger (mobile) + Brand Title + LIVE Indicator */}
-      <div className="flex items-center space-x-3 lg:space-x-4">
+    <header className="h-16 bg-slate-900/90 dark:bg-slate-900/90 light:bg-white backdrop-blur-md border-b border-slate-800/80 px-3 lg:px-6 flex items-center justify-between sticky top-0 z-30 select-none">
+      {/* Left: Mobile Brand & Hamburger Button */}
+      <div className="flex items-center space-x-3">
         <button
           onClick={onMobileMenuToggle}
           className="lg:hidden p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          aria-label="Menu Mobile"
+          aria-label="Ouvrir le menu de navigation"
         >
           <SlidersHorizontal className="w-5 h-5" />
         </button>
 
-        {/* Brand Logo & Name */}
-        <div className="flex items-center space-x-2.5">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-600 via-teal-500 to-emerald-400 p-0.5 shadow-md shadow-cyan-500/20 shrink-0">
-            <div className="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
+        {/* Mobile Mini Logo */}
+        <div className="lg:hidden flex items-center space-x-2">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-cyan-600 to-teal-500 p-0.5 shadow-md shadow-cyan-500/20">
+            <div className="w-full h-full bg-slate-950 rounded-[6px] flex items-center justify-center">
               <Flame className="w-4 h-4 text-cyan-400" />
             </div>
           </div>
-          <div>
-            <div className="flex items-center space-x-1.5">
-              <span className="text-sm font-black tracking-wider font-mono text-white dark:text-white light:text-slate-900 leading-tight">
-                BCS <span className="text-cyan-400">FLEET</span>
-              </span>
-              <span className="hidden xl:inline-block px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">
-                PRO PRODUCTION
-              </span>
-            </div>
-            <p className="text-[9px] text-slate-400 font-medium tracking-wider hidden sm:block">
-              SUPERVISION TÉLÉMATIQUE
-            </p>
-          </div>
+          <span className="font-mono font-black text-sm tracking-wider text-white">BCS FLEET</span>
         </div>
 
-        {/* Real Production Traccar Status Pill */}
-        <div className="hidden sm:flex items-center pl-2 border-l border-slate-800/80">
-          {traccarConnected ? (
+        {/* Network & Traccar Live Telemetry Badge */}
+        <div className="hidden sm:flex items-center space-x-2">
+          {!isOnline ? (
+            <div className="flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30 animate-pulse">
+              <WifiOff className="w-3.5 h-3.5" />
+              <span>HORS-LIGNE</span>
+            </div>
+          ) : traccarConnected ? (
             <div
-              className="flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 shadow-sm shadow-emerald-950/40"
+              className="flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shadow-sm"
               title="Traccar 6.5 connecté et flux télématique en temps réel"
             >
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span className="tracking-wide">● TRACCAR CONNECTÉ</span>
+              <span className="tracking-wide">TRACCAR CONNECTÉ</span>
               <span className="text-[10px] font-mono text-emerald-300/90 hidden lg:inline">
                 {wsStatus === 'CONNECTED' ? '(WebSocket Actif)' : '(Télémétrie REST)'}
               </span>
@@ -135,7 +123,7 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
               title="Cliquer pour tenter une reconnexion à Traccar"
             >
               <span className="w-2 h-2 rounded-full bg-rose-500" />
-              <span>● TRACCAR HORS LIGNE</span>
+              <span>TRACCAR HORS LIGNE</span>
               <span className="text-[10px] text-rose-300 font-normal hidden md:inline">
                 (Reconnexion)
               </span>
@@ -207,8 +195,18 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
         )}
       </div>
 
-      {/* Right: Quick Tools (Role Switcher, Notifications, Theme, Profile) */}
+      {/* Right: Quick Tools (PWA Install, Role, Notifications, Theme, Profile) */}
       <div className="flex items-center space-x-2 sm:space-x-3">
+        {/* PWA Install Button */}
+        <button
+          onClick={handleOpenInstallModal}
+          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/20 active:scale-95 transition-all shadow-sm"
+          title="Installer l'application PWA"
+        >
+          <Download className="w-3.5 h-3.5" />
+          <span className="hidden lg:inline">Installer PWA</span>
+        </button>
+
         {/* Role Switcher Pill */}
         <div className="hidden xl:flex items-center space-x-1 bg-slate-950/70 p-1 rounded-xl border border-slate-800 text-[10px]">
           <Shield className="w-3.5 h-3.5 text-cyan-400 ml-1.5" />
