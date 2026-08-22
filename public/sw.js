@@ -1,4 +1,4 @@
-﻿const CACHE_NAME = 'bcs-fleet-pro-v2';
+﻿const CACHE_NAME = 'bcs-fleet-pro-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -19,7 +19,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// 2. Activate event: Clean old caches
+// 2. Activate event: Clean old caches and claim clients immediately
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -33,11 +33,11 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// 3. Fetch event: Stale-While-Revalidate for static assets & Network-First for HTML/APIs
+// 3. Fetch event: Stale-While-Revalidate for static assets & Network-First for HTML
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Skip non-GET requests or non-http protocols
+  // Skip non-GET requests and non-http protocols
   if (event.request.method !== 'GET' || !url.protocol.startsWith('http')) {
     return;
   }

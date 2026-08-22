@@ -4,22 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     
+    <!-- Primary Title & Meta -->
+    <title>BCS Fleet PRO — Supervision Télématique &amp; Flotte GPS</title>
+    <meta name="description" content="Plateforme de supervision télématique en temps réel, suivi GPS Traccar 6.5, historique des trajets et gestion de flotte." />
+    
     <!-- Favicons -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="icon" type="image/png" href="/bcs-logo.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/bcs-logo-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/bcs-logo.png" />
     
-    <!-- PWA Manifest -->
+    <!-- PWA Web App Manifest -->
     <link rel="manifest" href="/manifest.json" />
     
-    <!-- Theme Colors -->
+    <!-- Theme & Status Bar Colors -->
     <meta name="theme-color" content="#0F172A" />
     <meta name="color-scheme" content="dark light" />
     
-    <!-- iOS / Safari PWA Support -->
+    <!-- iOS Safari Full PWA Support -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="BCS Fleet" />
     <link rel="apple-touch-icon" href="/bcs-logo.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/bcs-logo-192.png" />
     <link rel="apple-touch-icon" sizes="192x192" href="/bcs-logo-192.png" />
     <link rel="apple-touch-icon" sizes="512x512" href="/bcs-logo.png" />
     
@@ -28,25 +34,24 @@
     <meta name="msapplication-TileImage" content="/bcs-logo.png" />
     <meta name="application-name" content="BCS Fleet PRO" />
     
-    <!-- Mobile Web App Capable (Android Chrome) -->
+    <!-- Mobile Web App Capable -->
     <meta name="mobile-web-app-capable" content="yes" />
-    
-    <meta name="description" content="BCS Fleet PRO — Plateforme de supervision télématique en temps réel, suivi GPS Traccar 6.5, historique des trajets et gestion de flotte." />
-    <title>BCS Fleet PRO — Supervision Télématique &amp; Flotte GPS</title>
   </head>
   <body class="bg-slate-950 text-slate-100 antialiased selection:bg-cyan-500 selection:text-slate-950 select-none overflow-x-hidden">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
-      // Enregistrement optimisé du Service Worker PWA Mobile
+      // Service Worker registration with instant update check
       if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then((registration) => {
-              console.log('[BCS Fleet PWA] Service Worker actif :', registration.scope);
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw.js', { scope: '/' })
+            .then(function(reg) {
+              console.log('[PWA] Service Worker registered:', reg.scope);
+              // Check for SW updates
+              reg.update();
             })
-            .catch((err) => {
-              console.warn('[BCS Fleet PWA] Erreur Service Worker :', err);
+            .catch(function(err) {
+              console.warn('[PWA] Service Worker registration failed:', err);
             });
         });
       }
