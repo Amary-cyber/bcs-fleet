@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTraccar } from '../../contexts/TraccarContext';
 import { useFleet } from '../../contexts/FleetContext';
@@ -20,17 +20,25 @@ import {
   MapPin,
   Download,
   Wifi,
-  WifiOff
+  WifiOff,
+  Command,
+  Key,
+  Apple,
+  Sparkles
 } from 'lucide-react';
 
 interface TelematicsHeaderProps {
   onVehicleSelect: (vehicle: Vehicle) => void;
   onMobileMenuToggle: () => void;
+  onOpenCommandPalette?: () => void;
+  onOpenShortcutsModal?: () => void;
 }
 
 export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
   onVehicleSelect,
   onMobileMenuToggle,
+  onOpenCommandPalette,
+  onOpenShortcutsModal,
 }) => {
   const { user, role, logout, switchRole } = useAuth();
   const { traccarConnected, wsStatus, reconnect } = useTraccar();
@@ -73,13 +81,21 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
     window.dispatchEvent(new CustomEvent('open-pwa-install-modal'));
   };
 
+  const handleSearchClick = () => {
+    if (onOpenCommandPalette) {
+      onOpenCommandPalette();
+    } else {
+      setIsSearchOpen(true);
+    }
+  };
+
   return (
-    <header className="h-16 bg-slate-900/90 dark:bg-slate-900/90 light:bg-white backdrop-blur-md border-b border-slate-800/80 px-3 lg:px-6 flex items-center justify-between sticky top-0 z-30 select-none">
+    <header className="h-16 bg-slate-900/90 dark:bg-slate-900/90 light:bg-white/95 backdrop-blur-xl border-b border-slate-800/80 px-3 lg:px-6 flex items-center justify-between sticky top-0 z-30 select-none transition-colors">
       {/* Left: Mobile Brand & Hamburger Button */}
       <div className="flex items-center space-x-3">
         <button
           onClick={onMobileMenuToggle}
-          className="lg:hidden p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+          className="lg:hidden p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors active:scale-95"
           aria-label="Ouvrir le menu de navigation"
         >
           <SlidersHorizontal className="w-5 h-5" />
@@ -111,9 +127,9 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
               </span>
-              <span className="tracking-wide">TRACCAR CONNECTÉ</span>
+              <span className="tracking-wide font-mono text-[11px]">TRACCAR 6.5 LIVE</span>
               <span className="text-[10px] font-mono text-emerald-300/90 hidden lg:inline">
-                {wsStatus === 'CONNECTED' ? '(WebSocket Actif)' : '(Télémétrie REST)'}
+                {wsStatus === 'CONNECTED' ? '(WS Stream)' : '(REST)'}
               </span>
             </div>
           ) : (
@@ -132,28 +148,24 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
         </div>
       </div>
 
-      {/* Center: Global Search Bar */}
+      {/* Center: Global Search Bar / Command Palette Trigger */}
       <div ref={searchRef} className="relative flex-1 max-w-md mx-4 hidden md:block">
-        <div className="relative">
-          <Search className="absolute left-3.5 top-2.5 w-4 h-4 text-slate-400" />
-          <input
-            ref={inputRef}
-            type="text"
-            placeholder="Rechercher véhicule, plaque, chauffeur, IMEI..."
-            value={searchQuery}
-            onFocus={() => setIsSearchOpen(true)}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setIsSearchOpen(true);
-            }}
-            className="w-full pl-9 pr-14 py-2 bg-slate-950/70 dark:bg-slate-950/70 light:bg-slate-100 border border-slate-800 dark:border-slate-800 light:border-slate-300 rounded-xl text-xs text-white dark:text-white light:text-slate-900 placeholder-slate-500 focus:outline-none focus:border-cyan-500/80 focus:ring-1 focus:ring-cyan-500/50 transition-all shadow-inner"
-          />
-          <div className="absolute right-3 top-2 flex items-center space-x-1 text-[10px] font-mono text-slate-500 bg-slate-900 px-1.5 py-0.5 rounded border border-slate-800">
-            <span>⌘K</span>
+        <button
+          onClick={handleSearchClick}
+          type="button"
+          className="w-full flex items-center justify-between pl-3.5 pr-3 py-2 bg-slate-950/70 hover:bg-slate-950 border border-slate-800 hover:border-cyan-500/50 rounded-xl text-xs text-slate-400 hover:text-slate-200 transition-all shadow-inner group"
+        >
+          <div className="flex items-center gap-2.5">
+            <Search className="w-4 h-4 text-slate-400 group-hover:text-cyan-400 transition-colors" />
+            <span className="truncate">Rechercher véhicule, chauffeur, commande...</span>
           </div>
-        </div>
+          <div className="flex items-center gap-1 text-[10px] font-mono text-cyan-300 bg-slate-900 px-2 py-0.5 rounded-md border border-slate-700/80 shadow-sm">
+            <Command className="w-3 h-3" />
+            <span>K</span>
+          </div>
+        </button>
 
-        {/* Instant Search Results Dropdown */}
+        {/* Instant Search Results Dropdown if triggered locally */}
         {isSearchOpen && searchResults.length > 0 && (
           <div className="absolute top-11 left-0 right-0 bg-slate-900/95 backdrop-blur-xl border border-slate-800 rounded-2xl shadow-2xl overflow-hidden z-50 divide-y divide-slate-800/60 max-h-80 overflow-y-auto animate-in fade-in slide-in-from-top-2">
             {searchResults.map((v) => (
@@ -195,16 +207,37 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
         )}
       </div>
 
-      {/* Right: Quick Tools (PWA Install, Role, Notifications, Theme, Profile) */}
-      <div className="flex items-center space-x-2 sm:space-x-3">
-        {/* PWA Install Button */}
+      {/* Right: Quick Tools (Command, PWA Install, Role, Shortcuts, Notifications, Theme, Profile) */}
+      <div className="flex items-center space-x-1.5 sm:space-x-2.5">
+        
+        {/* Mobile Spotlight Button */}
+        <button
+          onClick={handleSearchClick}
+          className="md:hidden p-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800/80 transition-colors"
+          title="Recherche & Commandes"
+        >
+          <Search className="w-4 h-4 text-cyan-400" />
+        </button>
+
+        {/* Mac PWA Install Button */}
         <button
           onClick={handleOpenInstallModal}
-          className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/20 active:scale-95 transition-all shadow-sm"
-          title="Installer l'application PWA"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-gradient-to-r from-cyan-500/15 to-teal-500/15 text-cyan-300 border border-cyan-500/30 hover:border-cyan-400 hover:bg-cyan-500/25 active:scale-95 transition-all shadow-sm group"
+          title="Installer l'application PWA sur Mac / PC / Mobile"
         >
-          <Download className="w-3.5 h-3.5" />
-          <span className="hidden lg:inline">Installer PWA</span>
+          <Apple className="w-3.5 h-3.5 text-cyan-400 group-hover:scale-110 transition-transform" />
+          <span className="hidden sm:inline">PWA Mac & Mobile</span>
+        </button>
+
+        {/* Keyboard Shortcuts Button */}
+        <button
+          onClick={() => {
+            if (onOpenShortcutsModal) onOpenShortcutsModal();
+          }}
+          className="hidden md:flex p-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800/80 transition-colors focus:outline-none"
+          title="Raccourcis Clavier macOS (⌘/)"
+        >
+          <Key className="w-4 h-4 text-slate-400 hover:text-cyan-400 transition-colors" />
         </button>
 
         {/* Role Switcher Pill */}
@@ -230,7 +263,7 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
         <button
           onClick={() => setDrawerOpen(true)}
           className="relative p-2 rounded-xl text-slate-300 hover:text-white hover:bg-slate-800/80 transition-colors focus:outline-none"
-          title="Centre de notifications & alertes"
+          title="Centre de notifications & alertes (⌘N)"
         >
           <Bell className="w-5 h-5" />
           {unreadAlertsCount > 0 && (
@@ -254,7 +287,7 @@ export const TelematicsHeader: React.FC<TelematicsHeaderProps> = ({
         </button>
 
         {/* User Profile Avatar & Card */}
-        <div className="flex items-center space-x-2.5 pl-2 border-l border-slate-800/80">
+        <div className="flex items-center space-x-2 pl-2 border-l border-slate-800/80">
           <img
             src={
               user?.avatar_url ||

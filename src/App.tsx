@@ -1,8 +1,8 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { TraccarProvider } from './contexts/TraccarContext';
 import { FleetProvider, useFleet } from './contexts/FleetContext';
-import { NotificationProvider } from './contexts/NotificationContext';
+import { NotificationProvider, useNotifications } from './contexts/NotificationContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 
 import { TelematicsHeader } from './components/dashboard/TelematicsHeader';
@@ -12,6 +12,8 @@ import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { NotificationDrawer } from './components/layout/NotificationDrawer';
 import { EngineImmobilizerModal } from './components/immobilize/EngineImmobilizerModal';
 import { InstallPrompt } from './components/pwa/InstallPrompt';
+import { CommandPalette } from './components/layout/CommandPalette';
+import { MacShortcutsModal } from './components/layout/MacShortcutsModal';
 import { useOnlineStatus } from './lib/hooks/useOnlineStatus';
 
 import { LoginPage } from './pages/LoginPage';
@@ -37,12 +39,16 @@ import { WifiOff, X } from 'lucide-react';
 const MainAppContent: React.FC = () => {
   const { isAuthenticated } = useAuth();
   const { setSelectedVehicle } = useFleet();
+  const { isDrawerOpen, setDrawerOpen } = useNotifications();
   const isOnline = useOnlineStatus();
+  
   const [currentTab, setCurrentTab] = useState<string>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
   const [selectedVehicleForNav, setSelectedVehicleForNav] = useState<string | null>(null);
   const [immobilizeVehicleTarget, setImmobilizeVehicleTarget] = useState<Vehicle | null>(null);
   const [showOfflineToast, setShowOfflineToast] = useState<boolean>(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState<boolean>(false);
 
   // Handle URL shortcut parameters for PWA launch
   useEffect(() => {
@@ -62,23 +68,89 @@ const MainAppContent: React.FC = () => {
     }
   }, [isOnline]);
 
-  if (!isAuthenticated) {
-    return <LoginPage />;
-  }
-
-  const handleNavigateTab = (tabId: string, vehicleId?: string) => {
+  const handleNavigateTab = useCallback((tabId: string, vehicleId?: string) => {
     setCurrentTab(tabId);
     if (vehicleId) {
       setSelectedVehicleForNav(vehicleId);
     }
-  };
+  }, []);
+
+  // Global Keyboard Shortcuts (macOS & PC)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+
+      // ⌘K : Open Spotlight Command Palette
+      if (isCmdOrCtrl && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+        return;
+      }
+
+      // ⌘I : Open PWA Install Dialog
+      if (isCmdOrCtrl && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent('open-pwa-install-modal'));
+        return;
+      }
+
+      // ⌘/ : Open Shortcuts Help Modal
+      if (isCmdOrCtrl && (e.key === '/' || e.key === '?')) {
+        e.preventDefault();
+        setIsShortcutsModalOpen((prev) => !prev);
+        return;
+      }
+
+      // ⌘N : Toggle Notification Drawer
+      if (isCmdOrCtrl && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        setDrawerOpen(!isDrawerOpen);
+        return;
+      }
+
+      // ⌘1 .. ⌘9 : Tab Switching
+      if (isCmdOrCtrl && e.key >= '1' && e.key <= '9') {
+        const tabMap: Record<string, string> = {
+          '1': 'dashboard',
+          '2': 'tracking',
+          '3': 'vehicles',
+          '4': 'drivers',
+          '5': 'history',
+          '6': 'alerts',
+          '7': 'maintenance',
+          '8': 'expenses',
+          '9': 'reports',
+        };
+        const targetTab = tabMap[e.key];
+        if (targetTab) {
+          e.preventDefault();
+          handleNavigateTab(targetTab);
+          return;
+        }
+      }
+
+      // Escape : Close modals
+      if (e.key === 'Escape') {
+        if (isCommandPaletteOpen) setIsCommandPaletteOpen(false);
+        if (isShortcutsModalOpen) setIsShortcutsModalOpen(false);
+        if (isMobileMenuOpen) setIsMobileMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isCommandPaletteOpen, isShortcutsModalOpen, isMobileMenuOpen, isDrawerOpen, setDrawerOpen, handleNavigateTab]);
+
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
 
   const handleOpenImmobilizer = (v: Vehicle) => {
     setImmobilizeVehicleTarget(v);
   };
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative">
+    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative selection:bg-cyan-500 selection:text-slate-950">
       <AlertToastContainer onNavigateTab={handleNavigateTab} />
 
       {/* Desktop Sidebar */}
@@ -115,6 +187,8 @@ const MainAppContent: React.FC = () => {
             setCurrentTab('dashboard');
           }}
           onMobileMenuToggle={() => setIsMobileMenuOpen(true)}
+          onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+          onOpenShortcutsModal={() => setIsShortcutsModalOpen(true)}
         />
 
         <main className="flex-1 overflow-y-auto p-3 lg:p-4 pb-24 lg:pb-4 bg-slate-950/80">
@@ -199,6 +273,21 @@ const MainAppContent: React.FC = () => {
           onClose={() => setImmobilizeVehicleTarget(null)}
         />
       )}
+
+      {/* macOS / Global Spotlight Command Palette (⌘K) */}
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        onNavigateTab={handleNavigateTab}
+        onOpenImmobilizer={handleOpenImmobilizer}
+        onOpenShortcutsModal={() => setIsShortcutsModalOpen(true)}
+      />
+
+      {/* macOS Keyboard Shortcuts Guide Modal (⌘/) */}
+      <MacShortcutsModal
+        isOpen={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
+      />
 
       {/* Floating PWA Install Prompt Banner & Modal */}
       <InstallPrompt />
